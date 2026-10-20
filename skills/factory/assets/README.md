@@ -1,49 +1,55 @@
 # The software factory
 
-This folder is the factory's floor for this repository. The machinery itself is the
-[`software-factory`](https://github.com/b00y0h/software-factory) Claude Code plugin: the
-`/factory` orchestrator, eight agents, the spec-author templates, and this dashboard. Give it a
-feature, and it writes a spec, builds it on its own branch, has four reviewers check it in
-parallel, and then either ships it or stops and asks you.
+This repo is set up for the [`software-factory`](https://github.com/b00y0h/software-factory)
+Claude Code plugin. Give `/factory` a feature, or a whole ADR, and it writes specs, builds
+them, has four reviewers check each one in parallel, and then ships the work or stops and
+asks you.
 
 ```
-feature → spec-writer → builder ⇄ 4 reviewers (security · ux · ui · code) → approver → merge
-                                     (max 2 rounds)                              └→ needs-human
+feature or ADR unit → spec-writer → builder ⇄ 4 reviewers (security · ux · ui · code) → approver
+                                                (max 2 rounds)          job: merge  ┘   └→ needs-human
+                                                                        run: next unit, then one preview PR
 ```
 
-| File | What it is |
+## What lives where
+
+| Where | What |
 |---|---|
-| `project.md` | This repo's profile: stack, test commands, rules, and how it merges. Every agent reads it first. **Yours to edit.** |
-| `board.json` | Durable state, written only by the orchestrator. It drives the dashboard. |
-| `backlog.md` | The queue for `/factory next`. |
-| `jobs/NNN-slug/` | One folder per job: `feature.md`, `spec.md`, `build.md`, `round-N/review-*.md`, `decision.md`. |
-| `dashboard.html` | The live board. Refreshed from the skill on every run, so don't edit it here. |
+| `factory/project.md` (this folder, committed) | This repo's profile: stack, test commands, rules, branch names, previews, and how it merges. Every agent reads it first. **Yours to edit.** |
+| `~/.factory/<repo>/` (on your machine) | The factory's state: `board.json`, `backlog.md`, `runs/<adr>/plan.md`, one `jobs/NNN-slug/` folder per job, and `dashboard.html`. It sits outside every checkout, so any session can pick a run back up. |
+| the floor | The checkout where the builder works: the factory session's own worktree. If you start `/factory` from the main checkout, it moves into `.claude/worktrees/factory` first, so the main checkout never changes branch. |
 
 ## Run it
 
 ```text
-/factory init                    survey this repo and (re)write project.md
+/factory init                    survey this repo and (re)write factory/project.md
+/factory adr <ADR>               build every buildable unit of an ADR, in order, then open one preview PR
+/factory continue [answer]       resume a run, or answer the question it paused on
 /factory <feature>               run a new job through the loop
-/factory next                    run the first unchecked item in backlog.md
-/factory approve <job-id>        merge a needs-human job
+/factory next                    run the first unchecked item in the backlog
+/factory approve <job-id>        accept a job that is waiting on a human
 /factory rework <job-id> <note>  send a job back to the builder with feedback
 ```
 
 Watch it:
 
 ```bash
-cd factory && python3 -m http.server 8765
+cd ~/.factory/<repo> && python3 -m http.server 8765
 ```
 
 Then open <http://localhost:8765/dashboard.html>. Add `?demo` to see it running on sample
 data.
 
-## What "merge" means
+## Branches and merging
 
-The builder commits on `factory/<job-id>`, in its own worktree, and never pushes. After
-`APPROVE`, the orchestrator pushes exactly the reviewed commit and follows the merge mode
-in `project.md`:
+Nothing is ever named `factory/`. The spec-writer names each branch by `project.md`'s rule.
+The builder commits on the floor, but it never pushes.
 
-- `auto-merge`: open a PR with auto-merge on. The host merges once the required checks pass.
-- `open-only`: open the PR, and you merge it.
-- `local`: merge into the local base branch (only for repos with no remote).
+- **A job**: after `APPROVE`, the orchestrator pushes exactly the reviewed commit and follows
+  the merge mode in `project.md`. `auto-merge` opens a PR that the host merges once the
+  required checks pass, `open-only` opens a PR for you to merge, and `local` merges into the
+  local base branch (for repos with no remote).
+- **An ADR run**: every unit is accepted onto one branch, named by the ADR-run rule (for
+  example `feature/0062-…`, where `feature/` triggers a preview). When the last unit is
+  accepted, the branch is pushed once and a PR opens, never with auto-merge, so you can
+  review the whole ADR on its preview.

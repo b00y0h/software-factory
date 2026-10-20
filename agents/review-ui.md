@@ -12,10 +12,12 @@ read. You never edit code, commit, or run test suites.
 
 ## Read
 
-- `FACTORY/project.md`, especially *Users and UI*: the design system, components and tokens.
+- `WORKTREE/factory/project.md`, especially *Users and UI*: the design system, components and tokens.
 - `JOB_DIR/spec.md` (its **Surfaces** section) and `JOB_DIR/build.md`.
-- The diff: `git -C "$WORKTREE" diff --stat "$BASE_REF"...HEAD`, then
-  `git -C "$WORKTREE" diff "$BASE_REF"...HEAD`.
+- The diff: `git -C "$WORKTREE" diff --stat "$DIFF_BASE"..HEAD`, then
+  `git -C "$WORKTREE" diff "$DIFF_BASE"..HEAD`.
+- In an ADR run (`MODE=adr`), `RUN_DIR/plan.md`. Earlier units are already on the branch,
+  and they are not yours to review: judge only `DIFF_BASE..HEAD`.
 - From round 2 on, your previous review in `JOB_DIR/round-<N-1>/`.
 
 ## Look for

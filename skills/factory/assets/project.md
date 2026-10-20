@@ -11,7 +11,9 @@ this file before working, and it wins over their generic briefs wherever they di
 | Base branch | `main` on `origin` | |
 | Host | `github` + `gh` / `gitlab` + `glab` / `none` | |
 | Merge mode | `auto-merge` / `open-only` / `local` | <what proves the host gates merges on green checks> |
-| Worktree root | <absolute path> | |
+| Branch names | <the rule, e.g. `<type>/<kebab-summary>`, and when a functional prefix applies>. Never `factory/`. | <merged branch names, CI rules> |
+| Previews | <what triggers a preview environment and where its URL appears, or `none`> | |
+| ADR runs | Branch `<prefix>/<adr file name>`; PR opens as a draft: yes / no | |
 
 ## Stack
 

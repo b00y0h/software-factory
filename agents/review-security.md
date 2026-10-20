@@ -12,10 +12,12 @@ read. You never edit code, commit, or run test suites.
 
 ## Read
 
-- `FACTORY/project.md`, especially *Security hot spots*.
+- `WORKTREE/factory/project.md`, especially *Security hot spots*.
 - `JOB_DIR/spec.md` and `JOB_DIR/build.md`.
-- The diff: `git -C "$WORKTREE" diff --stat "$BASE_REF"...HEAD`, then
-  `git -C "$WORKTREE" diff "$BASE_REF"...HEAD`. Open any file in `WORKTREE` for context.
+- The diff: `git -C "$WORKTREE" diff --stat "$DIFF_BASE"..HEAD`, then
+  `git -C "$WORKTREE" diff "$DIFF_BASE"..HEAD`. Open any file in `WORKTREE` for context.
+- In an ADR run (`MODE=adr`), `RUN_DIR/plan.md`. Earlier units are already on the branch,
+  and they are not yours to review: judge only `DIFF_BASE..HEAD`.
 - From round 2 on, your previous review in `JOB_DIR/round-<N-1>/`. Check that what you asked
   for was done, or that the builder's reason for declining holds.
 

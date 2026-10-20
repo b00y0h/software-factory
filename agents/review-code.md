@@ -12,11 +12,13 @@ You never edit code or commit.
 
 ## Read
 
-- `FACTORY/project.md`, especially *Rules that bite* and *Tests and gates*.
+- `WORKTREE/factory/project.md`, especially *Rules that bite* and *Tests and gates*.
 - `JOB_DIR/spec.md` (the acceptance criteria) and `JOB_DIR/build.md` (the builder's
   evidence).
-- The diff: `git -C "$WORKTREE" diff --stat "$BASE_REF"...HEAD`, then
-  `git -C "$WORKTREE" diff "$BASE_REF"...HEAD`.
+- The diff: `git -C "$WORKTREE" diff --stat "$DIFF_BASE"..HEAD`, then
+  `git -C "$WORKTREE" diff "$DIFF_BASE"..HEAD`.
+- In an ADR run (`MODE=adr`), `RUN_DIR/plan.md`. Earlier units are already on the branch,
+  and they are not yours to review: judge only `DIFF_BASE..HEAD`.
 - From round 2 on, your previous review in `JOB_DIR/round-<N-1>/`.
 
 ## Look for
@@ -28,8 +30,8 @@ You never edit code or commit.
   imports.
 - **The repo's rules**, from *Rules that bite* in `project.md`.
 - **Generated files** are regenerated with the repo's own command, never hand-edited.
-- **Scope.** No unrelated changes. `git -C "$WORKTREE" log --oneline "$BASE_REF"..HEAD`
-  lists only this job's commits.
+- **Scope.** No unrelated changes. `git -C "$WORKTREE" log --oneline "$DIFF_BASE"..HEAD`
+  lists only this job's (or this unit's) commits.
 - **Simplicity.** The change reuses existing helpers and matches the surrounding naming and
   comment density.
 

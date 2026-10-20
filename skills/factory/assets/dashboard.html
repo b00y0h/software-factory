@@ -6,9 +6,9 @@
 <title>Software Factory</title>
 <!--
   The factory's dashboard. The master copy lives in the software-factory plugin
-  (skills/factory/assets/) and is copied into each repo's factory/ on every run,
-  so edit it there. Self-contained: no build step, no network beyond this folder.
-  Serve this folder:  cd factory && python3 -m http.server 8765
+  (skills/factory/assets/) and is copied into each repo's state folder, ~/.factory/<repo>/,
+  on every run, so edit it there. Self-contained: no build step, no network beyond this folder.
+  Serve this folder:  cd ~/.factory/<repo> && python3 -m http.server 8765
   Then open:          http://localhost:8765/dashboard.html   (add ?demo to see sample data)
   It polls board.json (written only by the /factory orchestrator) and reads job markdown on click.
 -->
@@ -98,6 +98,31 @@
   .human h2 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--alert); animation: pulse 1.6s ease-in-out infinite; }
   .human-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 10px; }
   .human-cards > .card { min-width: 0; }
+
+  /* ---------- ADR runs: one strip per run, a chip per unit ---------- */
+  .runs { margin: 0 24px 16px; display: grid; gap: 10px; }
+  .run { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; box-shadow: var(--shadow); }
+  .run.paused { border-color: var(--alert-line); }
+  .run-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .run-title { all: unset; cursor: pointer; display: block; margin-top: 2px; font-weight: 650; font-size: 14px; }
+  .run-title:hover { text-decoration: underline; }
+  .run-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .progress { height: 4px; border-radius: 99px; background: var(--surface-2); margin-top: 10px; overflow: hidden; }
+  .progress > i { display: block; height: 100%; background: var(--pass); transition: width .4s; }
+  .units { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+  .unit { font: 600 11px/1.4 var(--mono); padding: 2px 7px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--faint); }
+  button.unit { cursor: pointer; }
+  button.unit:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .unit.u-done { color: var(--pass); background: var(--pass-bg); border-color: var(--pass-line); }
+  .unit.u-active { color: var(--accent); background: var(--accent-bg); border-color: var(--accent); }
+  .unit.u-paused, .unit.u-ask { color: var(--alert); background: var(--alert-bg); border-color: var(--alert-line); }
+  .unit.u-queued { border-style: dashed; }
+  .unit.u-skipped { text-decoration: line-through; opacity: .55; border-style: dotted; }
+  .run-foot { margin-top: 8px; font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+  .run-foot .alert { color: var(--alert); font-weight: 600; }
+  .run .cmds { margin-top: 8px; }
+  .card-id { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .unit-tag { font: 600 10.5px var(--mono); color: var(--accent); background: var(--accent-bg); padding: 1px 5px; border-radius: 5px; flex: none; }
   .human .card { border-color: var(--alert-line); }
   .reason { margin: 8px 0 0; color: var(--text); font-size: 13px; }
   .cmds { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
@@ -239,7 +264,7 @@
 
   @media (max-width: 760px) {
     .top { padding: 16px 16px 10px; }
-    .banner, .human { margin-left: 16px; margin-right: 16px; }
+    .banner, .human, .runs { margin-left: 16px; margin-right: 16px; }
     .board { grid-template-columns: minmax(0, 1fr); padding: 0 16px 20px; }
     .col { min-height: 0; min-width: 0; }
     .col:not(:last-child)::after { top: auto; bottom: -11px; right: 50%; transform: rotate(135deg); }
@@ -277,6 +302,8 @@
     <div id="human-cards" class="human-cards"></div>
   </section>
 
+  <section id="runs" class="runs" hidden aria-label="ADR runs"></section>
+
   <main id="board" class="board" aria-label="Factory board"></main>
 
   <footer>
@@ -313,9 +340,10 @@
     { key: 'build',    name: 'Build',         who: [['builder', 'opus']] },
     { key: 'review',   name: 'Review',        who: [['security', 'opus'], ['ux · ui · code', 'sonnet']] },
     { key: 'approval', name: 'Approve',       who: [['approver', 'opus']] },
-    { key: 'done',     name: 'Merge',         who: null },   // filled from board.project.merge
+    { key: 'done',     name: 'Done',          who: null },   // filled from board.project.merge
   ];
-  const COLUMN_OF = { spec: 'spec', build: 'build', review: 'review', approval: 'approval', merging: 'done', merged: 'done' };
+  // `done` is an ADR unit accepted onto its run's branch; jobs end in merging/merged.
+  const COLUMN_OF = { spec: 'spec', build: 'build', review: 'review', approval: 'approval', merging: 'done', merged: 'done', done: 'done' };
   const ACTIVE = new Set(['spec', 'build', 'review', 'approval']);
   const REVIEWERS = [['security', 'sec'], ['ux', 'ux'], ['ui', 'ui'], ['code', 'code']];
   const POLL_MS = 2000;
@@ -368,6 +396,7 @@
         ? `${prWord()} open · yours to merge`
         : `${prWord()} open · merges when checks pass`;
       case 'merged': return 'merged';
+      case 'done': return 'accepted onto the run branch';
       case 'needs-human': return 'waiting on you';
       default: return job.stage || '';
     }
@@ -485,6 +514,7 @@
     const working = ACTIVE.has(job.stage);
     let badge = '';
     if (job.stage === 'merged') badge = '<span class="badge pass">merged</span>';
+    else if (job.stage === 'done') badge = '<span class="badge pass">accepted</span>';
     else if (job.stage === 'merging') badge = `<span class="badge accent">${board.project?.merge === 'open-only' ? prWord() + ' open' : 'auto-merge'}</span>`;
     else if (job.stage === 'needs-human') badge = `<span class="badge alert">${esc(job.decision === 'ESCALATE' ? 'escalated' : 'held')}</span>`;
     const url = job.url || job.mr;
@@ -499,12 +529,58 @@
         `</div>`;
     }
     return `<article class="card" tabindex="0" role="button" data-job="${esc(job.id)}" aria-label="${esc((job.title || job.id) + ', ' + stateLine(job))}">
-      <div class="card-top"><span class="job-id">${esc(job.id)}</span>${working ? '<span class="working" title="an agent is working"></span>' : badge}</div>
+      <div class="card-top"><span class="card-id">${job.unit ? `<span class="unit-tag" title="${esc('unit of ' + (job.run || 'a run'))}">${esc(job.unit)}</span>` : ''}<span class="job-id">${esc(job.id)}</span></span>${working ? '<span class="working" title="an agent is working"></span>' : badge}</div>
       <div class="card-title">${esc(job.title || job.id)}</div>
       <div class="state${job.stage === 'needs-human' ? ' alert' : ''}">${esc(stateLine(job))}</div>
       ${rounds.length ? `<div class="rounds">${rounds.map((r) => chipsRow(job, r)).join('')}</div>` : ''}
       ${extra}
       <div class="card-foot"><span class="mono">${esc(job.branch || '')}</span><span><span data-ago="${esc(job.updated || job.started || '')}">${esc(ago(job.updated || job.started))}</span>${mr}</span></div>
+    </article>`;
+  }
+
+  // A unit's status follows its job once it has one, so chips move with the cards.
+  function unitStatus(u) {
+    const j = u.job && (board.jobs || []).find((x) => x.id === u.job);
+    if (j) {
+      if (['done', 'merging', 'merged'].includes(j.stage)) return 'done';
+      if (j.stage === 'needs-human') return 'paused';
+      if (ACTIVE.has(j.stage)) return 'active';
+    }
+    return u.status || 'queued';
+  }
+  const RUN_ORDER = { running: 0, paused: 0, planning: 0, pushed: 1, merged: 2 };
+  function runHtml(run) {
+    const units = Array.isArray(run.units) ? run.units : [];
+    const statuses = units.map(unitStatus);
+    const buildable = statuses.filter((s) => s !== 'skipped').length;
+    const done = statuses.filter((s) => s === 'done').length;
+    const skipped = statuses.length - buildable;
+    const pct = buildable ? Math.round((done / buildable) * 100) : 0;
+    const stage = run.stage || 'running';
+    const label = stage === 'pushed' ? `${prWord()} open · preview` : stage;
+    const badge = stage === 'paused' ? 'alert' : stage === 'pushed' || stage === 'merged' ? 'pass' : 'accent';
+    const chips = units.map((u, i) => {
+      const s = statuses[i];
+      const tip = `${u.unit}${u.title ? ': ' + u.title : ''} · ${s}${u.reason ? ' · ' + u.reason : ''}`;
+      return u.job
+        ? `<button type="button" class="unit u-${s}" data-open-job="${esc(u.job)}" title="${esc(tip)}" aria-label="${esc(tip)}">${esc(u.unit)}</button>`
+        : `<span class="unit u-${s}" title="${esc(tip)}" aria-label="${esc(tip)}">${esc(u.unit)}</span>`;
+    }).join('');
+    const url = run.url && /^https?:\/\//i.test(run.url) ? `<a href="${esc(run.url)}" target="_blank" rel="noopener">${prWord()}</a>` : '';
+    const ask = stage === 'paused' && statuses.includes('ask');
+    const cmd = '/factory continue "<answer>"';
+    return `<article class="run${stage === 'paused' ? ' paused' : ''}">
+      <div class="run-head">
+        <div style="min-width:0">
+          <div class="job-id">${esc(run.branch || '')}</div>
+          <button type="button" class="run-title" data-open-run="${esc(run.id)}" title="Read the run plan">${esc(run.title || run.id)}</button>
+        </div>
+        <span class="badge ${badge}">${esc(label)}</span>
+      </div>
+      <div class="progress" aria-hidden="true"><i style="width:${pct}%"></i></div>
+      <div class="units">${chips}</div>
+      <div class="run-foot"><span>${done} of ${buildable} units done${skipped ? ` · ${skipped} skipped` : ''}</span>${run.reason ? `<span class="alert">${esc(run.reason)}</span>` : ''}${url}</div>
+      ${ask ? `<div class="cmds"><div class="cmd"><span>${esc(cmd)}</span><button class="copy" type="button" data-copy="${esc(cmd)}">Copy</button></div></div>` : ''}
     </article>`;
   }
 
@@ -534,8 +610,14 @@
     $('human-title').textContent = human.length === 1 ? 'Needs a human · 1 job' : `Needs a human · ${human.length} jobs`;
     $('human-cards').innerHTML = human.map((j) => cardHtml(j, true)).join('');
 
+    // ADR runs
+    const runs = (Array.isArray(board.runs) ? board.runs : []).slice()
+      .sort((a, b) => (RUN_ORDER[a.stage] ?? 0) - (RUN_ORDER[b.stage] ?? 0));
+    $('runs').hidden = runs.length === 0;
+    $('runs').innerHTML = runs.map(runHtml).join('');
+
     // columns
-    const quiet = jobs.length === 0 && backlog.length === 0;
+    const quiet = jobs.length === 0 && backlog.length === 0 && runs.length === 0;
     $('board').innerHTML = STAGES.map((s) => {
       const who = (s.who || doneWho()).map(([w, model]) => `<span>${esc(w)}</span>${model ? `<span class="model ${model}">${model}</span>` : ''}`).join('');
       let body;
@@ -550,7 +632,7 @@
         <div class="cards">${body || '<div class="col-empty">empty</div>'}</div>
       </section>`;
     }).join('') + (quiet ? `<div class="quiet"><strong>The floor is quiet.</strong>
-        Run <code>/factory &lt;feature&gt;</code> in Claude Code, or add a line to <code>backlog.md</code> and run <code>/factory next</code>.
+        Run <code>/factory &lt;feature&gt;</code> or <code>/factory adr &lt;ADR&gt;</code> in Claude Code, or add a line to <code>backlog.md</code> and run <code>/factory next</code>.
         <p><a href="?demo">See it running with sample data →</a></p></div>` : '');
 
     // FLIP: cards glide to their new column
@@ -602,22 +684,21 @@
       const e = $('error');
       e.hidden = false;
       e.innerHTML = location.protocol === 'file:'
-        ? 'Open this page through a server so it can read <code>board.json</code>: <code>cd factory &amp;&amp; python3 -m http.server 8765</code>, then <code>http://localhost:8765/dashboard.html</code>.'
+        ? 'Open this page through a server so it can read <code>board.json</code>: <code>cd ~/.factory/&lt;repo&gt; &amp;&amp; python3 -m http.server 8765</code>, then <code>http://localhost:8765/dashboard.html</code>.'
         : `Can't read <code>board.json</code> (${esc(err.message)}). Retrying…`;
       if (firstRender) render();
     }
   }
 
-  async function readJobFile(job, path) {
-    if (DEMO) return demoFile(job, path);
+  async function readFile(base, path) {
     try {
-      const res = await fetch(`jobs/${encodeURIComponent(job.id)}/${path}`, { cache: 'no-store' });
+      const res = await fetch(`${base}/${path}`, { cache: 'no-store' });
       return res.ok ? await res.text() : null;
     } catch { return null; }
   }
 
-  // ---------- drawer ----------
-  let openJobId = null;
+  // ---------- drawer: a job's or a run's markdown ----------
+  let openKey = null;
   let lastFocus = null;
   function jobFiles(job) {
     const files = [['feature.md', 'Feature'], ['spec.md', 'Spec'], ['build.md', 'Build'], ['rework.md', 'Rework']];
@@ -626,22 +707,33 @@
     files.push(['decision.md', 'Decision']);
     return files;
   }
-  async function openDrawer(id) {
+  function openDrawer(id) {
     const job = (board.jobs || []).find((j) => j.id === id);
     if (!job) return;
-    openJobId = id;
+    const base = `jobs/${encodeURIComponent(job.id)}`;
+    openDocs({ key: 'job:' + id, meta: `${job.unit ? job.unit + ' · ' : ''}${job.id} · ${stateLine(job)}`, title: job.title || job.id,
+      base, files: jobFiles(job), read: (p) => (DEMO ? demoFile(job, p) : readFile(base, p)) });
+  }
+  function openRun(id) {
+    const run = (board.runs || []).find((r) => r.id === id);
+    if (!run) return;
+    const base = `runs/${encodeURIComponent(run.id)}`;
+    openDocs({ key: 'run:' + id, meta: `${run.branch || run.id} · ${run.stage || ''}`, title: run.title || run.id,
+      base, files: [['plan.md', 'Run plan']], read: (p) => (DEMO ? demoRunFile(run, p) : readFile(base, p)) });
+  }
+  async function openDocs({ key, meta, title, base, files, read }) {
+    openKey = key;
     lastFocus = document.activeElement;
-    $('drawer-meta').textContent = `${job.id} · ${stateLine(job)}`;
-    $('drawer-title').textContent = job.title || job.id;
+    $('drawer-meta').textContent = meta;
+    $('drawer-title').textContent = title;
     $('tabs').innerHTML = '<span class="muted">Loading files…</span>';
     $('doc').innerHTML = '';
     $('drawer').classList.add('open'); $('scrim').classList.add('open');
     $('drawer').setAttribute('aria-hidden', 'false');
     $('close').focus();
 
-    const files = jobFiles(job);
-    const texts = await Promise.all(files.map(([p]) => readJobFile(job, p)));
-    if (openJobId !== id) return;
+    const texts = await Promise.all(files.map(([p]) => read(p)));
+    if (openKey !== key) return;
     const found = files.map((f, i) => ({ path: f[0], label: f[1], round: f[2], name: f[3] || f[1], text: texts[i] })).filter((f) => f.text != null);
     if (!found.length) {
       $('tabs').innerHTML = '';
@@ -665,14 +757,14 @@
       const dm = !vm && text.match(/^\s*(APPROVE|ESCALATE)\s*\n?/);
       if (vm) { head = `<div class="verdict ${verdictOf(vm[1])}">VERDICT: ${esc(vm[1].toUpperCase())}</div>`; text = text.slice(vm[0].length); }
       if (dm) { head = `<div class="verdict ${dm[1] === 'APPROVE' ? 'pass' : 'changes'}">${esc(dm[1])}</div>`; text = text.slice(dm[0].length); }
-      $('doc').innerHTML = `<div class="doc-path">factory/jobs/${esc(job.id)}/${esc(f.path)}</div>${head}<div class="md">${md(text)}</div>`;
+      $('doc').innerHTML = `<div class="doc-path">${esc(base)}/${esc(f.path)}</div>${head}<div class="md">${md(text)}</div>`;
       $('doc').scrollTop = 0;
     };
     $('tabs').onclick = (e) => { const b = e.target.closest('[data-file]'); if (b) show(Number(b.dataset.file)); };
     show(pick ?? 0);
   }
   function closeDrawer() {
-    openJobId = null;
+    openKey = null;
     $('drawer').classList.remove('open'); $('scrim').classList.remove('open');
     $('drawer').setAttribute('aria-hidden', 'true');
     if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
@@ -686,11 +778,15 @@
       return;
     }
     if (e.target.closest('[data-stop]')) return;
+    const unit = e.target.closest('[data-open-job]');
+    if (unit) { openDrawer(unit.dataset.openJob); return; }
+    const run = e.target.closest('[data-open-run]');
+    if (run) { openRun(run.dataset.openRun); return; }
     const card = e.target.closest('[data-job]');
     if (card) openDrawer(card.dataset.job);
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && openJobId) { closeDrawer(); return; }
+    if (e.key === 'Escape' && openKey) { closeDrawer(); return; }
     const card = e.target.closest?.('[data-job]');
     if (card && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openDrawer(card.dataset.job); }
   });
@@ -710,10 +806,26 @@
   function demoSeed() {
     const t = Date.now(); const at = (min) => new Date(t - min * 60000).toISOString();
     const all = (v) => ({ security: v, ux: v, ui: v, code: v });
-    const job = (n, slug, title, extra) => ({ id: `${n}-${slug}`, title, branch: `factory/${n}-${slug}`, round: 0, maxRound: 2, reviews: all('pending'), history: [], decision: null, reason: null, mr: null, started: at(90), updated: at(5), ...extra });
+    const job = (n, slug, title, extra) => ({ id: `${n}-${slug}`, title, branch: `feature/${slug}`, round: 0, maxRound: 2, reviews: all('pending'), history: [], decision: null, reason: null, url: null, started: at(90), updated: at(5), ...extra });
+    const runBranch = 'feature/0007-visitor-rate-limits';
+    const inRun = (unit) => ({ run: '0007-visitor-rate-limits', unit, branch: runBranch });
     return {
       project: { name: 'Sample project', host: 'github', merge: 'auto-merge' },
+      runs: [{
+        id: '0007-visitor-rate-limits', title: 'ADR-0007 Visitor rate limits (sample)', branch: runBranch,
+        stage: 'running', reason: null, url: null, updated: at(3),
+        units: [
+          { unit: 'U0', title: 'Policy fields and resolvers', status: 'done', job: '007-0007-u0-policy-fields' },
+          { unit: 'U1', title: 'Limiter on the submit endpoint', status: 'active', job: '008-0007-u1-submit-limiter' },
+          { unit: 'U2', title: 'Edge rule', status: 'skipped', reason: 'lives in the infra repo' },
+          { unit: 'U3', title: 'Dashboard limits card', status: 'queued' },
+          { unit: 'U4', title: 'Operator runbook', status: 'queued' },
+        ],
+      }],
       jobs: [
+        job('007', '0007-u0-policy-fields', 'Policy fields and resolvers', { ...inRun('U0'), stage: 'done', round: 1, reviews: all('PASS'), decision: 'APPROVE', updated: at(12) }),
+        job('008', '0007-u1-submit-limiter', 'Limiter on the submit endpoint', { ...inRun('U1'), stage: 'review', round: 1,
+          reviews: { security: 'pending', ux: 'PASS', ui: 'PASS', code: 'pending' } }),
         job('001', 'sitemap-lastmod', 'Add lastmod to tenant sitemaps', { stage: 'merged', round: 1, reviews: all('PASS'), decision: 'APPROVE', updated: at(140) }),
         job('002', 'preview-link-copy', 'Copy button for page preview links', { stage: 'needs-human', round: 2, decision: null,
           reviews: { security: 'PASS', ux: 'CHANGES', ui: 'PASS', code: 'PASS' },
@@ -731,17 +843,41 @@
   const DEMO_BACKLOG = ['Warn before publishing a page with an empty hero', 'Show the last editor on each page row', 'Sort the Media Library by most recently used'];
   let demoQueue = [];
   let demoTick = 0;
+  let demoIdle = 0;
+  const pendingReviews = () => ({ security: 'pending', ux: 'pending', ui: 'pending', code: 'pending' });
+  const slugOf = (t, n) => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').split('-').slice(0, n).join('-');
+  // A run starts its next queued unit once the last one is accepted, and pushes after the final one.
+  function demoRuns(now) {
+    for (const run of board.runs || []) {
+      if (run.stage !== 'running') continue;
+      const statuses = run.units.map(unitStatus);
+      if (statuses.includes('active') || statuses.includes('paused')) continue;
+      const next = run.units.find((u, i) => statuses[i] === 'queued');
+      run.updated = now;
+      if (!next) { run.stage = 'pushed'; continue; }
+      const id = `${String(board.jobs.length + 1).padStart(3, '0')}-${run.id.split('-')[0]}-${next.unit.toLowerCase()}-${slugOf(next.title, 2)}`;
+      next.job = id; next.status = 'active';
+      board.jobs.push({ id, run: run.id, unit: next.unit, title: next.title, branch: run.branch, stage: 'spec', round: 0, maxRound: 2,
+        reviews: pendingReviews(), history: [], started: now, updated: now });
+    }
+  }
   function demoStep() {
     const jobs = board.jobs;
     const now = new Date().toISOString();
+    demoRuns(now);
     const active = jobs.filter((j) => ACTIVE.has(j.stage) || j.stage === 'merging');
-    if (!active.length && !demoQueue.length) { board = demoSeed(); demoQueue = DEMO_BACKLOG.slice(); backlog = demoQueue.slice(); render(); return; }
+    const runsBusy = (board.runs || []).some((r) => r.stage === 'running');
+    if (!active.length && !demoQueue.length && !runsBusy) {
+      // Hold the finished board for a few beats, so the pushed run is seen, then start over.
+      if (++demoIdle < 4) { render(); return; }
+      demoIdle = 0; board = demoSeed(); demoQueue = DEMO_BACKLOG.slice(); backlog = demoQueue.slice(); render(); return;
+    }
     if (demoQueue.length && jobs.filter((j) => ACTIVE.has(j.stage)).length < 4 && demoTick % 3 === 0) {
       const title = demoQueue.shift(); backlog = demoQueue.slice();
       const n = String(jobs.length + 1).padStart(3, '0');
-      const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').split('-').slice(0, 4).join('-');
-      jobs.push({ id: `${n}-${slug}`, title, branch: `factory/${n}-${slug}`, stage: 'spec', round: 0, maxRound: 2,
-        reviews: { security: 'pending', ux: 'pending', ui: 'pending', code: 'pending' }, history: [], started: now, updated: now });
+      const slug = slugOf(title, 4);
+      jobs.push({ id: `${n}-${slug}`, title, branch: `feature/${slug}`, stage: 'spec', round: 0, maxRound: 2,
+        reviews: pendingReviews(), history: [], started: now, updated: now });
     } else if (active.length) {
       const j = active[demoTick % active.length];
       j.updated = now;
@@ -756,7 +892,8 @@
         else if (j.round < j.maxRound) { j.history.push({ round: j.round, reviews: { ...j.reviews } }); j.stage = 'build'; }
         else { j.stage = 'needs-human'; j.reason = 'Review rounds used up.'; }
       } else if (j.stage === 'approval') {
-        if (hash(j.id) % 100 < 85) { j.decision = 'APPROVE'; j.stage = 'merging'; }
+        if (j.run) { j.decision = 'APPROVE'; j.stage = 'done'; }
+        else if (hash(j.id) % 100 < 85) { j.decision = 'APPROVE'; j.stage = 'merging'; }
         else { j.decision = 'ESCALATE'; j.stage = 'needs-human'; j.reason = 'The diff adds a dependency, so a human should look.'; }
       } else if (j.stage === 'merging') j.stage = 'merged';
     }
@@ -767,10 +904,10 @@
   }
   function demoFile(job, path) {
     const st = job.stage;
-    const branchMsg = `**Job:** ${job.id} · **Branch:** ${job.branch}`;
-    if (path === 'feature.md') return job.title + '.';
+    const branchMsg = `**Job:** ${job.id} · **Branch:** ${job.branch}` + (job.unit ? `\n**Unit:** ${job.unit} of ADR-0007 · **Source:** docs/adr/0007-execution-plan.md#${job.unit.toLowerCase()}` : '');
+    if (path === 'feature.md') return job.unit ? `Unit ${job.unit} of ADR-0007: ${job.title}. Source: docs/adr/0007-execution-plan.md#${job.unit.toLowerCase()}. Adopt it; don't rewrite it.` : job.title + '.';
     if (path === 'spec.md') return st === 'spec' ? null :
-      `# Meridian — ${job.title}\n\n${branchMsg}\n**MR title:** feat(sample): ${job.title.charAt(0).toLowerCase() + job.title.slice(1)}\n\n> Sample spec from the dashboard's demo mode. A real one is written by the spec-writer with /spec-author.\n\n## Problem\nWhat is wrong today, for whom, and what it costs them.\n\n## Files to touch\n| File | Change |\n|---|---|\n| \`apps/dashboard-ui/src/…\` | the change |\n| \`apps/dashboard-ui/tests/…\` | a test per acceptance criterion |\n\n## Acceptance criteria\n1. **AC-1** The new behavior works on the happy path.\n2. **AC-2** Errors say what happened and what to do next.\n\n## What this is NOT\n- Anything beyond one MR.\n\n## Open questions\n- None.`;
+      `# Sample project — ${job.title}\n\n${branchMsg}\n**PR title:** feat(sample): ${job.title.charAt(0).toLowerCase() + job.title.slice(1)}\n\n> Sample spec from the dashboard's demo mode. A real one is written by the spec-writer, built on spec-author.\n\n## Problem\nWhat is wrong today, for whom, and what it costs them.\n\n## Files to touch\n| File | Change |\n|---|---|\n| \`apps/dashboard-ui/src/…\` | the change |\n| \`apps/dashboard-ui/tests/…\` | a test per acceptance criterion |\n\n## Acceptance criteria\n1. **AC-1** The new behavior works on the happy path.\n2. **AC-2** Errors say what happened and what to do next.\n\n## What this is NOT\n- Anything beyond one MR.\n\n## Open questions\n- None.`;
     if (path === 'build.md') return (st === 'spec' || (st === 'build' && !job.round)) ? null :
       `# Build — ${job.id}\n\n**Branch:** ${job.branch} · **HEAD:** \`0000000\` (demo)\n\n## Acceptance criteria\n| AC | Proven by | Result |\n|---|---|---|\n| AC-1 | \`feature.test.ts\` › "works on the happy path" | pass |\n| AC-2 | \`feature.test.ts\` › "explains the error" | pass |\n\n## Commands run\n\`\`\`\npnpm --filter @cms/dashboard-ui test   # 2 new, all green\n\`\`\``;
     const rm = path.match(/^round-(\d+)\/review-(\w+)\.md$/);
@@ -786,6 +923,12 @@
       ? `${job.decision}\nReason: ${job.decision === 'APPROVE' ? 'All four reviews pass and every acceptance criterion has a test.' : job.reason}\nReviewed-SHA: 0000000 (demo)\n\n## Checklist\n1. ✓ Final round all PASS\n2. ✓ Every AC has evidence\n3. ✓ Diff stays in scope\n4. ✓ No open questions\n5. ${job.decision === 'APPROVE' ? '✓' : '✗'} Nothing on the always-escalate list`
       : null;
     return null;
+  }
+
+  function demoRunFile(run, path) {
+    if (path !== 'plan.md') return null;
+    const rows = run.units.map((u, i) => `| ${i + 1} | ${u.unit} | ${u.title} | ${u.status === 'skipped' ? 'skip: ' + u.reason : 'build'} | ${i === 0 ? 'none' : 'U0'} | 0007-execution-plan.md#${u.unit.toLowerCase()} |`).join('\n');
+    return `# Run plan — ${run.title}\n\n**ADR:** docs/adr/0007-visitor-rate-limits.md · **Plan:** docs/adr/0007-execution-plan.md\n**Branch:** ${run.branch}\n**PR title:** feat(limits): visitor rate limits (ADR-0007)\n\n> Sample plan from the dashboard's demo mode. A real one is written by the spec-writer.\n\n## Units, in build order\n| # | Unit | Title | Decision | Depends on | Source |\n|---|---|---|---|---|---|\n${rows}\n\n## Rollout gates\n- U2's edge rule is deployed before the limiter is switched on in production.\n\n## Why this order\nU0 adds the fields every later unit reads. U3 and U4 describe what U1 builds.`;
   }
 
   // ---------- start ----------
