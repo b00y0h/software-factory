@@ -1,0 +1,805 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Software Factory</title>
+<!--
+  The factory's dashboard. The master copy lives in the software-factory plugin
+  (skills/factory/assets/) and is copied into each repo's factory/ on every run,
+  so edit it there. Self-contained: no build step, no network beyond this folder.
+  Serve this folder:  cd factory && python3 -m http.server 8765
+  Then open:          http://localhost:8765/dashboard.html   (add ?demo to see sample data)
+  It polls board.json (written only by the /factory orchestrator) and reads job markdown on click.
+-->
+<style>
+  :root {
+    --bg: #f5f6f8; --surface: #ffffff; --surface-2: #eceef2; --border: #dfe3e9;
+    --text: #15181d; --muted: #5d6877; --faint: #8b95a3;
+    --accent: #3b5bdb; --accent-bg: #e8edff;
+    --pass: #17824a; --pass-bg: #e3f5ea; --pass-line: #9fd8b6;
+    --changes: #b45309; --changes-bg: #fff3dc; --changes-line: #f3cf8d;
+    --alert: #c2410c; --alert-bg: #fff0e8; --alert-line: #f7b896;
+    --opus: #6d4bd8; --opus-bg: #f0ebff; --sonnet: #0f7c86; --sonnet-bg: #e2f5f6;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .08);
+    --shadow-lift: 0 6px 16px rgba(16, 24, 40, .12);
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e1014; --surface: #171a20; --surface-2: #1d2128; --border: #2b303a;
+      --text: #e8eaee; --muted: #a3abb8; --faint: #6f7886;
+      --accent: #8098ff; --accent-bg: rgba(128, 152, 255, .14);
+      --pass: #4fd18b; --pass-bg: rgba(79, 209, 139, .13); --pass-line: rgba(79, 209, 139, .4);
+      --changes: #f5b143; --changes-bg: rgba(245, 177, 67, .13); --changes-line: rgba(245, 177, 67, .42);
+      --alert: #ff8a57; --alert-bg: rgba(255, 138, 87, .10); --alert-line: rgba(255, 138, 87, .45);
+      --opus: #b7a2ff; --opus-bg: rgba(183, 162, 255, .14); --sonnet: #62d3dc; --sonnet-bg: rgba(98, 211, 220, .13);
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4); --shadow-lift: 0 8px 22px rgba(0, 0, 0, .5);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1014; --surface: #171a20; --surface-2: #1d2128; --border: #2b303a;
+    --text: #e8eaee; --muted: #a3abb8; --faint: #6f7886;
+    --accent: #8098ff; --accent-bg: rgba(128, 152, 255, .14);
+    --pass: #4fd18b; --pass-bg: rgba(79, 209, 139, .13); --pass-line: rgba(79, 209, 139, .4);
+    --changes: #f5b143; --changes-bg: rgba(245, 177, 67, .13); --changes-line: rgba(245, 177, 67, .42);
+    --alert: #ff8a57; --alert-bg: rgba(255, 138, 87, .10); --alert-line: rgba(255, 138, 87, .45);
+    --opus: #b7a2ff; --opus-bg: rgba(183, 162, 255, .14); --sonnet: #62d3dc; --sonnet-bg: rgba(98, 211, 220, .13);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4); --shadow-lift: 0 8px 22px rgba(0, 0, 0, .5);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; }
+  code, .mono { font-family: var(--mono); font-size: .92em; }
+  a { color: var(--accent); }
+
+  /* ---------- header ---------- */
+  .top {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+    padding: 20px 24px 12px;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .logo {
+    width: 34px; height: 34px; border-radius: 9px; flex: none;
+    display: grid; place-items: center; background: var(--text); color: var(--bg);
+  }
+  h1 { font-size: 18px; margin: 0; letter-spacing: -.01em; }
+  .sub { margin: 1px 0 0; color: var(--muted); font-size: 13px; }
+  .status { display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: 13px; flex-wrap: wrap; }
+  .live { display: inline-flex; align-items: center; gap: 6px; }
+  .live i { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; }
+  .live.ok i { background: var(--pass); box-shadow: 0 0 0 3px var(--pass-bg); }
+  .live.bad i { background: var(--alert); box-shadow: 0 0 0 3px var(--alert-bg); }
+  .theme-toggle {
+    border: 1px solid var(--border); background: var(--surface); border-radius: 8px;
+    width: 30px; height: 30px; display: grid; place-items: center; cursor: pointer; color: var(--muted);
+  }
+
+  .banner { margin: 0 24px 12px; padding: 9px 14px; border-radius: 10px; font-size: 13px; }
+  .banner.demo { background: var(--accent-bg); color: var(--text); }
+  .banner.error { background: var(--alert-bg); border: 1px solid var(--alert-line); }
+  .banner code { background: var(--surface); padding: 1px 6px; border-radius: 5px; }
+
+  /* ---------- needs-human strip ---------- */
+  .human {
+    margin: 0 24px 16px; padding: 14px; border-radius: 14px;
+    background: var(--alert-bg); border: 1px solid var(--alert-line);
+  }
+  .human h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--alert); display: flex; align-items: center; gap: 8px; }
+  .human h2 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--alert); animation: pulse 1.6s ease-in-out infinite; }
+  .human-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 10px; }
+  .human-cards > .card { min-width: 0; }
+  .human .card { border-color: var(--alert-line); }
+  .reason { margin: 8px 0 0; color: var(--text); font-size: 13px; }
+  .cmds { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+  .cmd {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: var(--surface-2); border-radius: 7px; padding: 5px 6px 5px 10px; font-family: var(--mono); font-size: 12px;
+  }
+  .cmd span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .copy {
+    border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 2px 8px;
+    font-size: 11px; cursor: pointer; flex: none; font-family: inherit;
+  }
+
+  /* ---------- the board ---------- */
+  .board {
+    display: grid; grid-template-columns: repeat(6, minmax(196px, 1fr)); gap: 12px;
+    padding: 0 24px 24px; overflow-x: auto; align-items: start;
+  }
+  .col { background: var(--surface-2); border-radius: 14px; padding: 10px; min-height: 180px; position: relative; }
+  .col-head { padding: 4px 4px 10px; }
+  .col-title { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-weight: 650; font-size: 13px; }
+  .col-title .n { color: var(--faint); font-weight: 500; font-variant-numeric: tabular-nums; }
+  .col-who { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; color: var(--muted); font-size: 12px; }
+  .col:not(:last-child)::after {
+    content: ""; position: absolute; top: 18px; right: -10px; width: 8px; height: 8px;
+    border-top: 2px solid var(--faint); border-right: 2px solid var(--faint); transform: rotate(45deg); opacity: .55;
+  }
+  .model { font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 999px; letter-spacing: .02em; }
+  .model.opus { color: var(--opus); background: var(--opus-bg); }
+  .model.sonnet { color: var(--sonnet); background: var(--sonnet-bg); }
+  .cards { display: flex; flex-direction: column; gap: 8px; }
+  .col-empty { color: var(--faint); font-size: 12px; text-align: center; padding: 18px 6px; border: 1px dashed var(--border); border-radius: 10px; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 11px; padding: 11px 12px;
+    box-shadow: var(--shadow); cursor: pointer; text-align: left; width: 100%;
+    transition: box-shadow .15s, transform .15s;
+  }
+  .card:hover { box-shadow: var(--shadow-lift); }
+  .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .job-id { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .working { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; animation: pulse 1.4s ease-in-out infinite; }
+  .card-title { margin: 5px 0 0; font-weight: 600; font-size: 13.5px; line-height: 1.35; }
+  .state { margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .state.alert { color: var(--alert); font-weight: 600; }
+  .card-foot { margin-top: 8px; display: flex; justify-content: space-between; gap: 8px; color: var(--faint); font-size: 11.5px; }
+  .card-foot .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .card-foot > span:last-child { flex: none; white-space: nowrap; }
+  .badge { font-size: 11px; font-weight: 650; padding: 2px 7px; border-radius: 6px; white-space: nowrap; }
+  .badge.pass { color: var(--pass); background: var(--pass-bg); }
+  .badge.alert { color: var(--alert); background: var(--alert-bg); }
+  .badge.accent { color: var(--accent); background: var(--accent-bg); }
+  .backlog-item { cursor: default; box-shadow: none; background: transparent; border-style: dashed; }
+  .backlog-item:hover { box-shadow: none; }
+  .backlog-item .card-title { font-weight: 500; }
+  .backlog-item .state { color: var(--faint); }
+
+  /* ---------- review rounds: a row of reviewer chips per round ---------- */
+  .rounds { margin-top: 9px; display: flex; flex-direction: column; gap: 5px; }
+  .round { display: flex; align-items: center; gap: 4px; }
+  .round.past { opacity: .62; }
+  .round-n { font-family: var(--mono); font-size: 10.5px; color: var(--faint); width: 18px; flex: none; }
+  .round .chip { flex: 1 1 0; min-width: 0; justify-content: center; overflow: hidden; padding: 2px 3px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; font-weight: 600;
+    padding: 2px 6px; border-radius: 6px; border: 1px solid transparent; white-space: nowrap;
+  }
+  .chip.pass { color: var(--pass); background: var(--pass-bg); border-color: var(--pass-line); }
+  .chip.changes { color: var(--changes); background: var(--changes-bg); border-color: var(--changes-line); }
+  .chip.pending { color: var(--faint); border: 1px dashed var(--border); background: transparent; }
+  .chip.pending.live { animation: breathe 1.6s ease-in-out infinite; }
+  .chip.landed { animation: pop .5s cubic-bezier(.2, 1.4, .4, 1); }
+
+  /* ---------- empty state ---------- */
+  .quiet { grid-column: 1 / -1; text-align: center; padding: 36px 16px 8px; color: var(--muted); }
+  .quiet strong { display: block; color: var(--text); font-size: 15px; margin-bottom: 6px; }
+  .quiet code { background: var(--surface); padding: 2px 7px; border-radius: 6px; border: 1px solid var(--border); }
+
+  footer { padding: 4px 24px 28px; color: var(--faint); font-size: 12px; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+  footer code { color: var(--muted); }
+  .legend { display: inline-flex; gap: 6px; align-items: center; }
+
+  /* ---------- drawer: a job's markdown ---------- */
+  .scrim { position: fixed; inset: 0; background: rgba(10, 12, 16, .38); opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 10; }
+  .scrim.open { opacity: 1; pointer-events: auto; }
+  .drawer {
+    position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 100vw); z-index: 11;
+    background: var(--surface); border-left: 1px solid var(--border); box-shadow: var(--shadow-lift);
+    transform: translateX(102%); transition: transform .25s cubic-bezier(.2, .8, .2, 1);
+    display: flex; flex-direction: column;
+  }
+  .drawer.open { transform: none; }
+  .drawer-head { padding: 16px 20px 12px; border-bottom: 1px solid var(--border); }
+  .drawer-head .row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .drawer-head h2 { margin: 4px 0 0; font-size: 17px; }
+  .close { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; width: 32px; height: 32px; cursor: pointer; flex: none; font-size: 16px; color: var(--muted); }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .tab {
+    border: 1px solid var(--border); background: var(--surface); border-radius: 7px; padding: 3px 9px;
+    font-size: 12px; cursor: pointer; color: var(--muted);
+  }
+  .tab[aria-selected="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .tab.pass { border-color: var(--pass-line); }
+  .tab.changes { border-color: var(--changes-line); }
+  .tab-group { color: var(--faint); font-size: 11px; font-family: var(--mono); align-self: center; margin-left: 4px; }
+  .doc { padding: 18px 22px 40px; overflow-y: auto; flex: 1; }
+  .doc-path { font-family: var(--mono); font-size: 11.5px; color: var(--faint); margin-bottom: 12px; overflow-wrap: anywhere; }
+  .verdict { display: inline-block; font-weight: 700; font-size: 13px; padding: 4px 10px; border-radius: 7px; margin-bottom: 6px; }
+  .verdict.pass { color: var(--pass); background: var(--pass-bg); }
+  .verdict.changes { color: var(--changes); background: var(--changes-bg); }
+
+  .md { font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+  .md h1 { font-size: 20px; margin: 0 0 12px; line-height: 1.3; }
+  .md h2 { font-size: 16px; margin: 22px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+  .md h3 { font-size: 14px; margin: 18px 0 6px; }
+  .md h4, .md h5, .md h6 { font-size: 13px; margin: 14px 0 4px; color: var(--muted); }
+  .md p { margin: 8px 0; }
+  .md ul, .md ol { margin: 8px 0; padding-left: 22px; }
+  .md li { margin: 3px 0; }
+  .md li.task { list-style: none; margin-left: -18px; }
+  .md code { background: var(--surface-2); padding: 1px 5px; border-radius: 5px; }
+  .md pre { background: var(--surface-2); padding: 12px 14px; border-radius: 9px; overflow-x: auto; font-size: 12.5px; line-height: 1.5; }
+  .md pre code { background: none; padding: 0; }
+  .md blockquote { margin: 10px 0; padding: 2px 14px; border-left: 3px solid var(--border); color: var(--muted); }
+  .md hr { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
+  .md .table { overflow-x: auto; margin: 10px 0; }
+  .md table { border-collapse: collapse; font-size: 13px; min-width: 60%; }
+  .md th, .md td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; vertical-align: top; }
+  .md th { background: var(--surface-2); font-weight: 600; }
+  .muted { color: var(--faint); }
+
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+  @keyframes breathe { 0%, 100% { border-color: var(--border); } 50% { border-color: var(--faint); } }
+  @keyframes pop { 0% { transform: scale(.6); } 100% { transform: scale(1); } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+
+  @media (max-width: 760px) {
+    .top { padding: 16px 16px 10px; }
+    .banner, .human { margin-left: 16px; margin-right: 16px; }
+    .board { grid-template-columns: minmax(0, 1fr); padding: 0 16px 20px; }
+    .col { min-height: 0; min-width: 0; }
+    .col:not(:last-child)::after { top: auto; bottom: -11px; right: 50%; transform: rotate(135deg); }
+    footer { padding: 4px 16px 24px; }
+    .doc { padding: 16px 16px 40px; }
+    .drawer-head { padding: 14px 16px 10px; }
+  }
+</style>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20V9l6 4V9l6 4V4h6v16z"/><path d="M6 17h2M11 17h2M16 17h2"/></svg>
+      </div>
+      <div>
+        <h1>Software factory</h1>
+        <p class="sub" id="sub">feature → spec → build → 4 reviews → approve → merge</p>
+      </div>
+    </div>
+    <div class="status">
+      <span id="counts"></span>
+      <span id="live" class="live"><i></i><span>Connecting…</span></span>
+      <button id="theme" class="theme-toggle" type="button" aria-label="Toggle light and dark theme" title="Toggle theme">◐</button>
+    </div>
+  </header>
+
+  <div id="demo-banner" class="banner demo" hidden>
+    Sample data with a simulated loop. This is not your board. <a href="?">Show the real board</a>
+  </div>
+  <div id="error" class="banner error" hidden></div>
+
+  <section id="human" class="human" hidden aria-label="Jobs that need a human">
+    <h2><span class="dot"></span><span id="human-title">Needs a human</span></h2>
+    <div id="human-cards" class="human-cards"></div>
+  </section>
+
+  <main id="board" class="board" aria-label="Factory board"></main>
+
+  <footer>
+    <span><code>/factory &lt;feature&gt;</code> new job</span>
+    <span><code>/factory next</code> next backlog item</span>
+    <span><code>/factory approve &lt;id&gt;</code> merge a held job</span>
+    <span><code>/factory rework &lt;id&gt; &lt;note&gt;</code> send it back</span>
+    <span class="legend"><span class="chip pass">✓ pass</span><span class="chip changes">↺ changes</span><span class="chip pending">· pending</span></span>
+  </footer>
+
+  <div id="scrim" class="scrim"></div>
+  <aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" aria-hidden="true">
+    <div class="drawer-head">
+      <div class="row">
+        <div style="min-width:0">
+          <div id="drawer-meta" class="job-id"></div>
+          <h2 id="drawer-title"></h2>
+        </div>
+        <button id="close" class="close" type="button" aria-label="Close">✕</button>
+      </div>
+      <div id="tabs" class="tabs" role="tablist"></div>
+    </div>
+    <div id="doc" class="doc"></div>
+  </aside>
+
+<script>
+(() => {
+  'use strict';
+
+  // ---------- the loop, as columns ----------
+  const STAGES = [
+    { key: 'backlog',  name: 'Backlog',       who: [['backlog.md']] },
+    { key: 'spec',     name: 'Spec',          who: [['spec-writer', 'opus']] },
+    { key: 'build',    name: 'Build',         who: [['builder', 'opus']] },
+    { key: 'review',   name: 'Review',        who: [['security', 'opus'], ['ux · ui · code', 'sonnet']] },
+    { key: 'approval', name: 'Approve',       who: [['approver', 'opus']] },
+    { key: 'done',     name: 'Merge',         who: null },   // filled from board.project.merge
+  ];
+  const COLUMN_OF = { spec: 'spec', build: 'build', review: 'review', approval: 'approval', merging: 'done', merged: 'done' };
+  const ACTIVE = new Set(['spec', 'build', 'review', 'approval']);
+  const REVIEWERS = [['security', 'sec'], ['ux', 'ux'], ['ui', 'ui'], ['code', 'code']];
+  const POLL_MS = 2000;
+
+  const $ = (id) => document.getElementById(id);
+  const DEMO = new URLSearchParams(location.search).has('demo');
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ---------- small helpers ----------
+  const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const verdictOf = (v) => { const u = String(v || '').toUpperCase(); return u === 'PASS' ? 'pass' : u === 'CHANGES' ? 'changes' : 'pending'; };
+  function ago(iso) {
+    if (!iso) return '';
+    const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+    if (!isFinite(s)) return '';
+    if (s < 45) return 'just now';
+    if (s < 3600) return Math.round(s / 60) + 'm ago';
+    if (s < 86400) return Math.round(s / 3600) + 'h ago';
+    return Math.round(s / 86400) + 'd ago';
+  }
+  function roundsOf(job) {
+    const out = (job.history || []).map((h) => ({ round: h.round, reviews: h.reviews || {}, past: true }));
+    if (job.round > 0 && job.reviews && !out.some((r) => r.round === job.round)) {
+      out.push({ round: job.round, reviews: job.reviews, past: false });
+    }
+    out.sort((a, b) => a.round - b.round);
+    out.forEach((r, i) => { r.past = i < out.length - 1; });
+    return out;
+  }
+  // GitLab calls them merge requests; everyone else, pull requests.
+  const prWord = () => (board.project?.host === 'gitlab' ? 'MR' : 'PR');
+  function doneWho() {
+    const m = board.project?.merge;
+    if (m === 'auto-merge') return [[`${prWord()} merges when checks pass`]];
+    if (m === 'open-only') return [[`${prWord()} opened, you merge`]];
+    if (m === 'local') return [['merged locally']];
+    return [['as project.md says']];
+  }
+  function stateLine(job) {
+    const r = job.round || 0;
+    switch (job.stage) {
+      case 'spec': return 'writing the spec';
+      case 'build': return r > 0 ? `fixing round ${r} reviews` : 'building';
+      case 'review': {
+        const n = REVIEWERS.filter(([k]) => verdictOf(job.reviews?.[k]) !== 'pending').length;
+        return `round ${r} · ${n} of 4 reviews in`;
+      }
+      case 'approval': return 'deciding';
+      case 'merging': return board.project?.merge === 'open-only'
+        ? `${prWord()} open · yours to merge`
+        : `${prWord()} open · merges when checks pass`;
+      case 'merged': return 'merged';
+      case 'needs-human': return 'waiting on you';
+      default: return job.stage || '';
+    }
+  }
+
+  // ---------- tiny markdown renderer (escapes everything first) ----------
+  function safeUrl(u) { return !/^\s*(javascript|data|vbscript):/i.test(u); }
+  function inline(s) {
+    return s.split(/(`[^`]+`)/g).map((part) => {
+      if (/^`[^`]+`$/.test(part)) return '<code>' + esc(part.slice(1, -1)) + '</code>';
+      return esc(part)
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/~~([^~]+)~~/g, '<del>$1</del>')
+        .replace(/(^|[\s(])\*([^*\s][^*]*?)\*(?=[\s).,;:!?]|$)/g, '$1<em>$2</em>')
+        .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, t, u) => safeUrl(u) ? `<a href="${u}" target="_blank" rel="noopener">${t}</a>` : t);
+    }).join('');
+  }
+  function splitRow(line) {
+    const cells = []; let cur = ''; let tick = false;
+    const s = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (c === '`') tick = !tick;
+      if (c === '\\' && s[i + 1] === '|') { cur += '|'; i++; continue; }
+      if (c === '|' && !tick) { cells.push(cur.trim()); cur = ''; continue; }
+      cur += c;
+    }
+    cells.push(cur.trim());
+    return cells;
+  }
+  const LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+  const BLOCK_START = /^(```|#{1,6}\s|>|\s*([-*+]|\d+[.)])\s+|\s*\|)/;
+  function md(src) {
+    const lines = String(src).replace(/\r\n?/g, '\n').split('\n');
+    const out = [];
+    let i = 0;
+    while (i < lines.length) {
+      const l = lines[i];
+      if (/^\s*```/.test(l)) {
+        const buf = []; i++;
+        while (i < lines.length && !/^\s*```/.test(lines[i])) buf.push(lines[i++]);
+        i++;
+        out.push('<pre><code>' + esc(buf.join('\n')) + '</code></pre>');
+        continue;
+      }
+      if (/^\s*$/.test(l)) { i++; continue; }
+      if (/^<!--/.test(l.trim())) { while (i < lines.length && !/-->/.test(lines[i])) i++; i++; continue; }
+      let m = l.match(/^(#{1,6})\s+(.*)$/);
+      if (m) { out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`); i++; continue; }
+      if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l)) { out.push('<hr>'); i++; continue; }
+      if (/^\s*\|/.test(l) && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1])) {
+        const head = splitRow(l); i += 2;
+        const rows = [];
+        while (i < lines.length && /^\s*\|/.test(lines[i])) rows.push(splitRow(lines[i++]));
+        out.push('<div class="table"><table><thead><tr>' + head.map((c) => `<th>${inline(c)}</th>`).join('') +
+          '</tr></thead><tbody>' + rows.map((r) => '<tr>' + r.map((c) => `<td>${inline(c)}</td>`).join('') + '</tr>').join('') +
+          '</tbody></table></div>');
+        continue;
+      }
+      if (/^\s*>/.test(l)) {
+        const buf = [];
+        while (i < lines.length && /^\s*>/.test(lines[i])) buf.push(lines[i++].replace(/^\s*>\s?/, ''));
+        out.push('<blockquote>' + md(buf.join('\n')) + '</blockquote>');
+        continue;
+      }
+      if (LIST_RE.test(l)) {
+        const ordered = /\d/.test(l.match(LIST_RE)[2]);
+        const items = [];
+        while (i < lines.length) {
+          const lm = lines[i].match(LIST_RE);
+          if (lm) { items.push({ depth: Math.floor(lm[1].length / 2), text: lm[3] }); i++; continue; }
+          if (/^\s{2,}\S/.test(lines[i]) && items.length) { items[items.length - 1].text += ' ' + lines[i].trim(); i++; continue; }
+          break;
+        }
+        const tag = ordered ? 'ol' : 'ul';
+        out.push(`<${tag}>` + items.map((it) => {
+          const task = it.text.match(/^\[( |x|X)\]\s+(.*)$/);
+          const pad = it.depth ? ` style="margin-left:${it.depth * 18}px"` : '';
+          if (task) return `<li class="task"${pad}>${task[1] === ' ' ? '☐' : '☑'} ${inline(task[2])}</li>`;
+          return `<li${pad}>${inline(it.text)}</li>`;
+        }).join('') + `</${tag}>`);
+        continue;
+      }
+      const buf = [];
+      while (i < lines.length && !/^\s*$/.test(lines[i]) && !(buf.length && BLOCK_START.test(lines[i]))) buf.push(lines[i++]);
+      out.push('<p>' + buf.map(inline).join('<br>') + '</p>');
+    }
+    return out.join('\n');
+  }
+
+  // ---------- rendering ----------
+  let board = { jobs: [] };
+  let backlog = [];
+  let lastKey = '';
+  let firstRender = true;
+  const seenVerdicts = new Map();
+
+  function chipsRow(job, r) {
+    return `<div class="round${r.past ? ' past' : ''}"><span class="round-n">R${r.round}</span>` +
+      REVIEWERS.map(([k, short]) => {
+        const v = verdictOf(r.reviews[k]);
+        const key = `${job.id}:${r.round}:${k}`;
+        const before = seenVerdicts.get(key);
+        const landed = !firstRender && v !== 'pending' && before === 'pending';
+        seenVerdicts.set(key, v);
+        const live = v === 'pending' && job.stage === 'review' && !r.past;
+        const icon = v === 'pass' ? '✓' : v === 'changes' ? '↺' : '·';
+        const label = `${k}: ${v === 'pending' ? 'pending' : v.toUpperCase()}`;
+        return `<span class="chip ${v}${live ? ' live' : ''}${landed ? ' landed' : ''}" title="${esc(label)}" aria-label="${esc(label)}">${icon} ${short}</span>`;
+      }).join('') + '</div>';
+  }
+
+  function cardHtml(job, inStrip) {
+    const rounds = roundsOf(job);
+    const working = ACTIVE.has(job.stage);
+    let badge = '';
+    if (job.stage === 'merged') badge = '<span class="badge pass">merged</span>';
+    else if (job.stage === 'merging') badge = `<span class="badge accent">${board.project?.merge === 'open-only' ? prWord() + ' open' : 'auto-merge'}</span>`;
+    else if (job.stage === 'needs-human') badge = `<span class="badge alert">${esc(job.decision === 'ESCALATE' ? 'escalated' : 'held')}</span>`;
+    const url = job.url || job.mr;
+    const mr = url && /^https?:\/\//i.test(url) ? ` · <a href="${esc(url)}" target="_blank" rel="noopener" data-stop>${prWord()}</a>` : '';
+    let extra = '';
+    if (inStrip) {
+      const approve = `/factory approve ${job.id}`;
+      const rework = `/factory rework ${job.id} "<note>"`;
+      extra = (job.reason ? `<p class="reason">${esc(job.reason)}</p>` : '') +
+        `<div class="cmds">` +
+        [approve, rework].map((c) => `<div class="cmd"><span>${esc(c)}</span><button class="copy" type="button" data-copy="${esc(c)}" data-stop>Copy</button></div>`).join('') +
+        `</div>`;
+    }
+    return `<article class="card" tabindex="0" role="button" data-job="${esc(job.id)}" aria-label="${esc((job.title || job.id) + ', ' + stateLine(job))}">
+      <div class="card-top"><span class="job-id">${esc(job.id)}</span>${working ? '<span class="working" title="an agent is working"></span>' : badge}</div>
+      <div class="card-title">${esc(job.title || job.id)}</div>
+      <div class="state${job.stage === 'needs-human' ? ' alert' : ''}">${esc(stateLine(job))}</div>
+      ${rounds.length ? `<div class="rounds">${rounds.map((r) => chipsRow(job, r)).join('')}</div>` : ''}
+      ${extra}
+      <div class="card-foot"><span class="mono">${esc(job.branch || '')}</span><span><span data-ago="${esc(job.updated || job.started || '')}">${esc(ago(job.updated || job.started))}</span>${mr}</span></div>
+    </article>`;
+  }
+
+  function render() {
+    const firstPos = new Map();
+    document.querySelectorAll('[data-job]').forEach((el) => firstPos.set(el.dataset.job, el.getBoundingClientRect()));
+
+    const jobs = Array.isArray(board.jobs) ? board.jobs : [];
+    const byCol = Object.fromEntries(STAGES.map((s) => [s.key, []]));
+    const human = [];
+    for (const j of jobs) {
+      if (j.stage === 'needs-human') human.push(j);
+      else if (COLUMN_OF[j.stage]) byCol[COLUMN_OF[j.stage]].push(j);
+    }
+    byCol.done.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));
+
+    // counts
+    const running = jobs.filter((j) => ACTIVE.has(j.stage)).length;
+    const merged = jobs.filter((j) => j.stage === 'merged' || j.stage === 'merging').length;
+    $('counts').textContent = `${running} running · ${human.length} need${human.length === 1 ? 's' : ''} you · ${merged} shipped`;
+    const name = board.project?.name;
+    $('sub').textContent = (name ? name + ' · ' : '') + 'feature → spec → build → 4 reviews → approve → merge';
+    document.title = name ? `${name} · Software Factory` : 'Software Factory';
+
+    // needs-human strip
+    $('human').hidden = human.length === 0;
+    $('human-title').textContent = human.length === 1 ? 'Needs a human · 1 job' : `Needs a human · ${human.length} jobs`;
+    $('human-cards').innerHTML = human.map((j) => cardHtml(j, true)).join('');
+
+    // columns
+    const quiet = jobs.length === 0 && backlog.length === 0;
+    $('board').innerHTML = STAGES.map((s) => {
+      const who = (s.who || doneWho()).map(([w, model]) => `<span>${esc(w)}</span>${model ? `<span class="model ${model}">${model}</span>` : ''}`).join('');
+      let body;
+      if (s.key === 'backlog') {
+        body = backlog.map((t) => `<div class="card backlog-item"><div class="card-title">${esc(t)}</div><div class="state">queued · /factory next</div></div>`).join('');
+      } else {
+        body = byCol[s.key].map((j) => cardHtml(j, false)).join('');
+      }
+      const count = s.key === 'backlog' ? backlog.length : byCol[s.key].length;
+      return `<section class="col" aria-label="${esc(s.name)}">
+        <div class="col-head"><div class="col-title"><span>${esc(s.name)}</span><span class="n">${count || ''}</span></div><div class="col-who">${who}</div></div>
+        <div class="cards">${body || '<div class="col-empty">empty</div>'}</div>
+      </section>`;
+    }).join('') + (quiet ? `<div class="quiet"><strong>The floor is quiet.</strong>
+        Run <code>/factory &lt;feature&gt;</code> in Claude Code, or add a line to <code>backlog.md</code> and run <code>/factory next</code>.
+        <p><a href="?demo">See it running with sample data →</a></p></div>` : '');
+
+    // FLIP: cards glide to their new column
+    if (!firstRender && !reduceMotion) {
+      document.querySelectorAll('[data-job]').forEach((el) => {
+        const f = firstPos.get(el.dataset.job);
+        const l = el.getBoundingClientRect();
+        if (!f) { el.animate([{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: 'ease-out' }); return; }
+        const dx = f.left - l.left, dy = f.top - l.top;
+        if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+          el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 480, easing: 'cubic-bezier(.2,.8,.2,1)' });
+        }
+      });
+    }
+    firstRender = false;
+  }
+
+  function setLive(ok, text) {
+    const el = $('live');
+    el.className = 'live ' + (ok ? 'ok' : 'bad');
+    el.lastElementChild.textContent = text;
+  }
+
+  // ---------- data: real board ----------
+  function parseBacklog(text) {
+    return text.replace(/<!--[\s\S]*?-->/g, '').split('\n')
+      .map((l) => l.match(/^\s*[-*]\s+\[ \]\s+(.+)$/)).filter(Boolean).map((m) => m[1].trim());
+  }
+  let lastBacklogFetch = 0;
+  async function poll() {
+    try {
+      const res = await fetch('board.json', { cache: 'no-store' });
+      if (!res.ok) throw new Error('board.json: HTTP ' + res.status);
+      const text = await res.text();
+      const next = JSON.parse(text);
+      if (Date.now() - lastBacklogFetch > 8000) {
+        lastBacklogFetch = Date.now();
+        try {
+          const b = await fetch('backlog.md', { cache: 'no-store' });
+          backlog = b.ok ? parseBacklog(await b.text()) : [];
+        } catch { /* backlog is optional */ }
+      }
+      $('error').hidden = true;
+      setLive(true, next.updated ? 'Live · board ' + ago(next.updated) : 'Live');
+      const key = text + '|' + backlog.join('\n');
+      if (key !== lastKey) { lastKey = key; board = next; render(); }
+    } catch (err) {
+      setLive(false, 'Offline');
+      const e = $('error');
+      e.hidden = false;
+      e.innerHTML = location.protocol === 'file:'
+        ? 'Open this page through a server so it can read <code>board.json</code>: <code>cd factory &amp;&amp; python3 -m http.server 8765</code>, then <code>http://localhost:8765/dashboard.html</code>.'
+        : `Can't read <code>board.json</code> (${esc(err.message)}). Retrying…`;
+      if (firstRender) render();
+    }
+  }
+
+  async function readJobFile(job, path) {
+    if (DEMO) return demoFile(job, path);
+    try {
+      const res = await fetch(`jobs/${encodeURIComponent(job.id)}/${path}`, { cache: 'no-store' });
+      return res.ok ? await res.text() : null;
+    } catch { return null; }
+  }
+
+  // ---------- drawer ----------
+  let openJobId = null;
+  let lastFocus = null;
+  function jobFiles(job) {
+    const files = [['feature.md', 'Feature'], ['spec.md', 'Spec'], ['build.md', 'Build'], ['rework.md', 'Rework']];
+    const maxR = Math.max(job.round || 0, ...(job.history || []).map((h) => h.round || 0));
+    for (let r = 1; r <= maxR; r++) for (const [k, short] of REVIEWERS) files.push([`round-${r}/review-${k}.md`, short, r, `Round ${r} ${k} review`]);
+    files.push(['decision.md', 'Decision']);
+    return files;
+  }
+  async function openDrawer(id) {
+    const job = (board.jobs || []).find((j) => j.id === id);
+    if (!job) return;
+    openJobId = id;
+    lastFocus = document.activeElement;
+    $('drawer-meta').textContent = `${job.id} · ${stateLine(job)}`;
+    $('drawer-title').textContent = job.title || job.id;
+    $('tabs').innerHTML = '<span class="muted">Loading files…</span>';
+    $('doc').innerHTML = '';
+    $('drawer').classList.add('open'); $('scrim').classList.add('open');
+    $('drawer').setAttribute('aria-hidden', 'false');
+    $('close').focus();
+
+    const files = jobFiles(job);
+    const texts = await Promise.all(files.map(([p]) => readJobFile(job, p)));
+    if (openJobId !== id) return;
+    const found = files.map((f, i) => ({ path: f[0], label: f[1], round: f[2], name: f[3] || f[1], text: texts[i] })).filter((f) => f.text != null);
+    if (!found.length) {
+      $('tabs').innerHTML = '';
+      $('doc').innerHTML = '<p class="muted">No files yet. The first agent is still working.</p>';
+      return;
+    }
+    let html = ''; let lastRound = 0;
+    found.forEach((f, i) => {
+      if (f.round && f.round !== lastRound) { html += `<span class="tab-group">R${f.round}</span>`; lastRound = f.round; }
+      const v = f.round ? verdictOf((f.text.match(/^\s*VERDICT:\s*(\w+)/) || [])[1]) : '';
+      const name = v ? `${f.name}: ${v === 'pass' ? 'PASS' : 'CHANGES'}` : f.name;
+      html += `<button class="tab ${v}" role="tab" type="button" data-file="${i}" aria-selected="false" aria-label="${esc(name)}" title="${esc(name)}">${esc(f.label)}</button>`;
+    });
+    $('tabs').innerHTML = html;
+    const pick = ['decision.md', 'build.md', 'spec.md'].map((p) => found.findIndex((f) => f.path === p)).find((i) => i >= 0);
+    const show = (i) => {
+      const f = found[i];
+      document.querySelectorAll('#tabs .tab').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.file === String(i))));
+      let text = f.text; let head = '';
+      const vm = text.match(/^\s*VERDICT:\s*(PASS|CHANGES)\s*\n?/i);
+      const dm = !vm && text.match(/^\s*(APPROVE|ESCALATE)\s*\n?/);
+      if (vm) { head = `<div class="verdict ${verdictOf(vm[1])}">VERDICT: ${esc(vm[1].toUpperCase())}</div>`; text = text.slice(vm[0].length); }
+      if (dm) { head = `<div class="verdict ${dm[1] === 'APPROVE' ? 'pass' : 'changes'}">${esc(dm[1])}</div>`; text = text.slice(dm[0].length); }
+      $('doc').innerHTML = `<div class="doc-path">factory/jobs/${esc(job.id)}/${esc(f.path)}</div>${head}<div class="md">${md(text)}</div>`;
+      $('doc').scrollTop = 0;
+    };
+    $('tabs').onclick = (e) => { const b = e.target.closest('[data-file]'); if (b) show(Number(b.dataset.file)); };
+    show(pick ?? 0);
+  }
+  function closeDrawer() {
+    openJobId = null;
+    $('drawer').classList.remove('open'); $('scrim').classList.remove('open');
+    $('drawer').setAttribute('aria-hidden', 'true');
+    if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
+  }
+
+  // ---------- events ----------
+  document.addEventListener('click', (e) => {
+    const copy = e.target.closest('[data-copy]');
+    if (copy) {
+      navigator.clipboard?.writeText(copy.dataset.copy).then(() => { copy.textContent = 'Copied'; setTimeout(() => { copy.textContent = 'Copy'; }, 1200); });
+      return;
+    }
+    if (e.target.closest('[data-stop]')) return;
+    const card = e.target.closest('[data-job]');
+    if (card) openDrawer(card.dataset.job);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && openJobId) { closeDrawer(); return; }
+    const card = e.target.closest?.('[data-job]');
+    if (card && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openDrawer(card.dataset.job); }
+  });
+  $('close').onclick = closeDrawer;
+  $('scrim').onclick = closeDrawer;
+  $('theme').onclick = () => {
+    const root = document.documentElement;
+    const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+    try { localStorage.setItem('factory-theme', root.dataset.theme); } catch { /* storage is optional */ }
+  };
+  try { const t = localStorage.getItem('factory-theme'); if (t) document.documentElement.dataset.theme = t; } catch { /* storage is optional */ }
+  setInterval(() => document.querySelectorAll('[data-ago]').forEach((el) => { el.textContent = ago(el.dataset.ago); }), 15000);
+
+  // ---------- demo mode: sample jobs and a simulated loop ----------
+  function hash(s) { let h = 2166136261; for (const c of s) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+  function demoSeed() {
+    const t = Date.now(); const at = (min) => new Date(t - min * 60000).toISOString();
+    const all = (v) => ({ security: v, ux: v, ui: v, code: v });
+    const job = (n, slug, title, extra) => ({ id: `${n}-${slug}`, title, branch: `factory/${n}-${slug}`, round: 0, maxRound: 2, reviews: all('pending'), history: [], decision: null, reason: null, mr: null, started: at(90), updated: at(5), ...extra });
+    return {
+      project: { name: 'Sample project', host: 'github', merge: 'auto-merge' },
+      jobs: [
+        job('001', 'sitemap-lastmod', 'Add lastmod to tenant sitemaps', { stage: 'merged', round: 1, reviews: all('PASS'), decision: 'APPROVE', updated: at(140) }),
+        job('002', 'preview-link-copy', 'Copy button for page preview links', { stage: 'needs-human', round: 2, decision: null,
+          reviews: { security: 'PASS', ux: 'CHANGES', ui: 'PASS', code: 'PASS' },
+          history: [{ round: 1, reviews: { security: 'PASS', ux: 'CHANGES', ui: 'CHANGES', code: 'PASS' } }],
+          reason: 'Review rounds used up: ux still wants focus to return to the row after copying.', updated: at(25) }),
+        job('003', 'rate-limiting', 'Rate-limit the public form submit endpoint', { stage: 'review', round: 2,
+          reviews: { security: 'pending', ux: 'PASS', ui: 'pending', code: 'PASS' },
+          history: [{ round: 1, reviews: { security: 'CHANGES', ux: 'PASS', ui: 'CHANGES', code: 'PASS' } }] }),
+        job('004', 'media-empty-state', 'Empty state for the Media Library', { stage: 'build' }),
+        job('005', 'variant-id-report', 'Show variant_id on the experiment report', { stage: 'spec', updated: at(1) }),
+        job('006', 'duplicate-block-shortcut', 'Keyboard shortcut to duplicate a block', { stage: 'approval', round: 1, reviews: all('PASS') }),
+      ],
+    };
+  }
+  const DEMO_BACKLOG = ['Warn before publishing a page with an empty hero', 'Show the last editor on each page row', 'Sort the Media Library by most recently used'];
+  let demoQueue = [];
+  let demoTick = 0;
+  function demoStep() {
+    const jobs = board.jobs;
+    const now = new Date().toISOString();
+    const active = jobs.filter((j) => ACTIVE.has(j.stage) || j.stage === 'merging');
+    if (!active.length && !demoQueue.length) { board = demoSeed(); demoQueue = DEMO_BACKLOG.slice(); backlog = demoQueue.slice(); render(); return; }
+    if (demoQueue.length && jobs.filter((j) => ACTIVE.has(j.stage)).length < 4 && demoTick % 3 === 0) {
+      const title = demoQueue.shift(); backlog = demoQueue.slice();
+      const n = String(jobs.length + 1).padStart(3, '0');
+      const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').split('-').slice(0, 4).join('-');
+      jobs.push({ id: `${n}-${slug}`, title, branch: `factory/${n}-${slug}`, stage: 'spec', round: 0, maxRound: 2,
+        reviews: { security: 'pending', ux: 'pending', ui: 'pending', code: 'pending' }, history: [], started: now, updated: now });
+    } else if (active.length) {
+      const j = active[demoTick % active.length];
+      j.updated = now;
+      if (j.stage === 'spec') j.stage = 'build';
+      else if (j.stage === 'build') { j.stage = 'review'; j.round += 1; j.reviews = { security: 'pending', ux: 'pending', ui: 'pending', code: 'pending' }; }
+      else if (j.stage === 'review') {
+        const pending = REVIEWERS.map(([k]) => k).filter((k) => verdictOf(j.reviews[k]) === 'pending');
+        if (pending.length) {
+          const k = pending[hash(j.id + demoTick) % pending.length];
+          j.reviews[k] = j.round > 1 || hash(j.id + j.round + k) % 100 < 72 ? 'PASS' : 'CHANGES';
+        } else if (REVIEWERS.every(([k]) => j.reviews[k] === 'PASS')) j.stage = 'approval';
+        else if (j.round < j.maxRound) { j.history.push({ round: j.round, reviews: { ...j.reviews } }); j.stage = 'build'; }
+        else { j.stage = 'needs-human'; j.reason = 'Review rounds used up.'; }
+      } else if (j.stage === 'approval') {
+        if (hash(j.id) % 100 < 85) { j.decision = 'APPROVE'; j.stage = 'merging'; }
+        else { j.decision = 'ESCALATE'; j.stage = 'needs-human'; j.reason = 'The diff adds a dependency, so a human should look.'; }
+      } else if (j.stage === 'merging') j.stage = 'merged';
+    }
+    demoTick++;
+    board.updated = now;
+    setLive(true, 'Demo · simulated');
+    render();
+  }
+  function demoFile(job, path) {
+    const st = job.stage;
+    const branchMsg = `**Job:** ${job.id} · **Branch:** ${job.branch}`;
+    if (path === 'feature.md') return job.title + '.';
+    if (path === 'spec.md') return st === 'spec' ? null :
+      `# Meridian — ${job.title}\n\n${branchMsg}\n**MR title:** feat(sample): ${job.title.charAt(0).toLowerCase() + job.title.slice(1)}\n\n> Sample spec from the dashboard's demo mode. A real one is written by the spec-writer with /spec-author.\n\n## Problem\nWhat is wrong today, for whom, and what it costs them.\n\n## Files to touch\n| File | Change |\n|---|---|\n| \`apps/dashboard-ui/src/…\` | the change |\n| \`apps/dashboard-ui/tests/…\` | a test per acceptance criterion |\n\n## Acceptance criteria\n1. **AC-1** The new behavior works on the happy path.\n2. **AC-2** Errors say what happened and what to do next.\n\n## What this is NOT\n- Anything beyond one MR.\n\n## Open questions\n- None.`;
+    if (path === 'build.md') return (st === 'spec' || (st === 'build' && !job.round)) ? null :
+      `# Build — ${job.id}\n\n**Branch:** ${job.branch} · **HEAD:** \`0000000\` (demo)\n\n## Acceptance criteria\n| AC | Proven by | Result |\n|---|---|---|\n| AC-1 | \`feature.test.ts\` › "works on the happy path" | pass |\n| AC-2 | \`feature.test.ts\` › "explains the error" | pass |\n\n## Commands run\n\`\`\`\npnpm --filter @cms/dashboard-ui test   # 2 new, all green\n\`\`\``;
+    const rm = path.match(/^round-(\d+)\/review-(\w+)\.md$/);
+    if (rm) {
+      const r = Number(rm[1]); const k = rm[2];
+      const src = r === job.round ? job.reviews : (job.history.find((h) => h.round === r) || {}).reviews;
+      const v = verdictOf(src && src[k]);
+      if (v === 'pending') return null;
+      return `VERDICT: ${v.toUpperCase()}\n\n` + (v === 'changes' ? `## Blocking\n1. \`apps/dashboard-ui/src/…:42\` — a sample finding — the sample fix\n\n` : '') +
+        `## Checked\nSample ${k} review from demo mode. The real reviewer's notes appear here.`;
+    }
+    if (path === 'decision.md') return job.decision === 'APPROVE' || job.decision === 'ESCALATE'
+      ? `${job.decision}\nReason: ${job.decision === 'APPROVE' ? 'All four reviews pass and every acceptance criterion has a test.' : job.reason}\nReviewed-SHA: 0000000 (demo)\n\n## Checklist\n1. ✓ Final round all PASS\n2. ✓ Every AC has evidence\n3. ✓ Diff stays in scope\n4. ✓ No open questions\n5. ${job.decision === 'APPROVE' ? '✓' : '✗'} Nothing on the always-escalate list`
+      : null;
+    return null;
+  }
+
+  // ---------- start ----------
+  if (DEMO) {
+    $('demo-banner').hidden = false;
+    board = demoSeed(); demoQueue = DEMO_BACKLOG.slice(); backlog = demoQueue.slice();
+    setLive(true, 'Demo · simulated');
+    render();
+    setInterval(demoStep, 1800);
+  } else {
+    poll();
+    setInterval(poll, POLL_MS);
+  }
+})();
+</script>
+</body>
+</html>
