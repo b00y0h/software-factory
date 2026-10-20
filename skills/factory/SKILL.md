@@ -1,17 +1,21 @@
 ---
 name: factory
-description: Run the software factory in any repository. Takes one feature, or every unit of an ADR in build order, through spec (built on spec-author), build, four parallel reviews and approval, with every step done by a subagent and tracked on a live dashboard. Use only when the user types /factory.
-argument-hint: "init | adr <ADR> | continue [answer] | <feature> | next | approve <job-id> | rework <job-id> <note>"
+description: Run the software factory in any repository. Takes one feature, or every unit of an ADR in build order, through spec (built on spec-author), build, four parallel reviews and approval, with every step done by a subagent and tracked on a live dashboard. Several sessions can run jobs or ADRs at once, one per session. Use only when the user types /factory.
+argument-hint: "init | adr <ADR> | continue [run] [answer] | <feature> | next | approve <job-id> | rework <job-id> <note>"
 disable-model-invocation: true
 ---
 
 # /factory: you are the orchestrator
 
-The session running this skill is the factory's orchestrator. You run the loop below and
-spawn every agent. You are the **only** writer of `board.json` and `backlog.md`, and the
-only one who creates branches or pushes. You never write a spec, code, review or decision
-yourself. Agents do that, one file each. If an agent fails, retry it once, then move the job
-to `needs-human`. Never do its work for it.
+The session running this skill is an orchestrator. You run the loop below for **one** job or
+**one** ADR run, and spawn every agent it needs. You are the only writer of your own board
+file, and the only one who creates branches or pushes for your job or run. You never write a
+spec, code, review or decision yourself. Agents do that, one file each. If an agent fails,
+retry it once, then move the job to `needs-human`. Never do its work for it.
+
+Other sessions may be running other jobs or runs on the same repo at the same time. Each has
+its own floor (its own worktree) and its own board file, and the dashboard shows all of them.
+You never write another session's files.
 
 This skill ships in the `software-factory` plugin, and the same machinery runs in every
 repository. What differs per repo lives in that repo's `factory/project.md`: its stack, its
@@ -95,8 +99,8 @@ Agent(subagent_type: "software-factory:<role>", description: "<role> <JOB>",
       [name: "builder-<JOB>"  ← the builder only],
       prompt: "MODE=<job | unit | plan | adr>
                SKILL_DIR=<abs>
-               WORKTREE=<abs>     ← the floor
-               FACTORY=<abs>      ← the state folder
+               WORKTREE=<abs>     ← your floor
+               FACTORY=<abs>      ← the shared state folder
                JOB=<JOB>          JOB_DIR=<abs>
                RUN=<RUN>          RUN_DIR=<abs>     ← runs only
                ADR=<abs>                            ← spec-writer, MODE=plan only
@@ -116,46 +120,68 @@ Agents get their context from those files, never from this conversation.
 | `MAX_ROUNDS` | 2 | Review rounds a job gets before it goes to `needs-human` |
 | `REVIEWERS` | security, ux, ui, code | Role `review-<name>` writes `review-<name>.md` |
 
-## The floor and the state folder
+## The floor, the state folder, and your board file
 
-**The floor** (`WORKTREE`) is the one checkout where all building happens: this session's
-own checkout, provided it is a **linked worktree**. Claude Code lets a worktree session edit
-files only in its own worktree, so a builder in any other checkout would be refused. One job
-or one run uses the floor at a time, switching its branch as it goes.
+**Your floor** (`WORKTREE`) is the one checkout where your job or run is built: this
+session's own checkout, provided it is a **linked worktree**. Claude Code lets a worktree
+session edit files only in its own worktree, so a builder in any other checkout would be
+refused. A floor holds one job or one run at a time, switching its branch as it goes. Another
+session has another floor.
 
-- `git rev-parse --git-dir` differs from `git rev-parse --git-common-dir`: this session is
-  in a linked worktree, so it is the floor.
+- `git rev-parse --git-dir` differs from `git rev-parse --git-common-dir`: this session is in
+  a linked worktree, so it is your floor. Refuse to start if another board file already holds
+  an unfinished job or run on this floor (see **Board files**). Finish or continue that one
+  first.
 - They're the same: this session is on the repo's **main checkout**, and the factory never
-  switches that checkout's branch. Create `<ROOT>/.claude/worktrees/factory` if it doesn't
-  exist (`git -C <ROOT> worktree add --detach <path> <BASE_REF>`), load `EnterWorktree` with
-  ToolSearch, and enter it **before spawning any agent**. That is the floor from now on. If
-  `EnterWorktree` isn't available, stop and tell the user to open a session in that folder.
+  switches that checkout's branch. Claim your job or run id first (below), then create
+  `<ROOT>/.claude/worktrees/factory-<id>` (`git -C <ROOT> worktree add --detach <path>
+  <BASE_REF>`), load `EnterWorktree` with ToolSearch, and enter it **before spawning any
+  agent**. That is your floor. If `EnterWorktree` isn't available, stop and tell the user to
+  open a session in that folder.
 
-Before work starts on the floor, it must have no changes outside `factory/`
+Before work starts on your floor, it must have no changes outside `factory/`
 (`git status --porcelain -- . ':!factory'` prints nothing). Otherwise stop, and say what's
 uncommitted.
 
-**The state folder** (`FACTORY`) is `~/.factory/<repo>/`, outside every checkout, so any
-session can read it and any agent can write its file there. It holds `board.json`,
-`backlog.md`, `dashboard.html`, `jobs/` and `runs/`. The repo keeps only `factory/project.md`
-and `factory/README.md`.
+**The state folder** (`FACTORY`) is `~/.factory/<repo>/`, outside every checkout and shared
+by every session:
+
+| Path | Written by |
+|---|---|
+| `project.json` | Setup only: `{ "name", "host", "merge" }` from the profile's Settings |
+| `board/<id>.json` | **one file per job or run, written only by the session that owns it** |
+| `backlog.md` | the user; `/factory next` ticks items |
+| `jobs/<JOB>/`, `runs/<RUN>/` | the agents of the owning session |
+| `tests.lock` | the lock builders take turns on to run heavy commands |
+| `dashboard.html` | copied from this skill on every command |
+
+The repo keeps only `factory/project.md` and `factory/README.md`.
 
 | Name | Value |
 |---|---|
 | `SKILL_DIR` | this skill's base directory, shown when the skill loads (inside the plugin's install folder) |
 | `ROOT` | the repo's main checkout: `dirname "$(git rev-parse --path-format=absolute --git-common-dir)"` |
 | `<repo>` | `basename <ROOT>` |
-| `WORKTREE` | the floor (above) |
+| `WORKTREE` | your floor (above) |
 | `FACTORY` | `~/.factory/<repo>` (absolute) |
 | `PROFILE` | `<WORKTREE>/factory/project.md` |
 | `BASE` | the base branch from `PROFILE` Settings, normally `main`. `BASE_REF` is `origin/<BASE>`, or `<BASE>` when Host is `none` |
-| `JOB` | `NNN-slug`: the next number after the highest one in `FACTORY/jobs/` (starting at `001`). For a run unit, the slug is `<adr number>-<unit id>-<2 words>`, for example `007-0062-u0-tenant-policy` |
-| `JOB_DIR` | `FACTORY/jobs/<JOB>` |
 | `RUN` | the ADR's file or folder name, for example `0062-childrens-code-opt-in-tenant` |
 | `RUN_DIR` | `FACTORY/runs/<RUN>` |
+| `JOB` | a run unit: `<adr number>-<unit id>-<2 words>`, for example `0062-u0-tenant-policy`. A standalone job: `NNN-<slug>`, the next number after the highest in `FACTORY/jobs/` (starting at `001`). |
+| `JOB_DIR` | `FACTORY/jobs/<JOB>` |
+| `BOARD` | your board file: `FACTORY/board/<RUN>.json` for a run, `FACTORY/board/<JOB>.json` for a standalone job |
 | `BRANCH` | named by the spec-writer, following `PROFILE`'s Branch names rule. **Never** a `factory/` prefix. |
 | `DIFF_BASE` | the commit the job or unit started from. Reviewers diff `DIFF_BASE..HEAD`, so in a run they see only this unit's work. |
 | `ROUND_DIR` | `JOB_DIR/round-<N>` |
+
+**Claiming an id.** Two sessions must never take the same id. Claim it by creating its
+folder with a plain `mkdir` (no `-p`), which fails if the folder exists:
+- A run: `mkdir FACTORY/runs/<RUN>`. If it exists and that run isn't `merged`, it is already
+  someone's: refuse, and point at `/factory continue <RUN>` from the session that owns it.
+- A standalone job: `mkdir FACTORY/jobs/<NNN-slug>`. If it exists, take the next number and
+  try again.
+- A run unit: its id carries the ADR number, so it is unique once the run is claimed.
 
 ## Commands
 
@@ -165,48 +191,70 @@ Parse `$ARGUMENTS`:
 |---|---|
 | `init` | Run **Setup**, even if `PROFILE` already exists (it is replaced). |
 | `adr <ADR>` | Start an **ADR run**. `<ADR>` is a path to the ADR file or its folder, or just its number (find `docs/**/<number>*`). |
-| `continue [answer]` | Resume the active run (see **Continuing a run**). |
-| `next` | Take the first `- [ ]` line in `FACTORY/backlog.md`, tick it (`- [x] <text> → <JOB>`), and run it as a new job. If none is left, say so and stop. |
-| `approve <job-id>` | The job must be in `needs-human`. For a job, go to **Merge**. For a run unit, accept it (step 6 of the run) and continue the run. |
-| `rework <job-id> <note>` | Go to **Rework**. |
+| `continue [run] [answer]` | Resume a run (see **Continuing a run**). If the first word is the id of an open run, it picks the run; the rest is the answer. |
+| `next` | Claim the first `- [ ]` line in `FACTORY/backlog.md` that no other session has claimed (`mkdir FACTORY/claims/<first 12 hex of the line's sha1>` succeeds), tick it (`- [x] <text> → <JOB>`), and run it as a new job. If none is left, say so and stop. |
+| `approve <job-id>` | The job must be in `needs-human` on **your** floor (enter its floor first if this session isn't on it; see **Continuing a run**). For a job, go to **Merge**. For a run unit, accept it (step 6 of the run) and continue the run. |
+| `rework <job-id> <note>` | Same floor rule. Go to **Rework**. |
 | anything else | The text is a feature. Run a new **job**. |
 
 Before any command:
-1. Settle the floor (above).
-2. If `PROFILE` doesn't exist, run **Setup** and stop there.
-3. Copy `SKILL_DIR/assets/dashboard.html` over `FACTORY/dashboard.html` if they differ.
-4. Tidy up once: for each job in `merging` or run in `pushed`, check its PR or MR
-   (`gh pr view <url> --json state` or `glab mr view <url> -F json`). If it is merged, set
-   `merged`. Do this once per run. Never poll.
-5. The floor holds one thing at a time. Refuse to start a job or a run while a run is
-   `running` or `paused`, or a job is still between `spec` and `approval`. Finish or continue
-   that first.
+1. If `FACTORY/board.json` exists, this state folder predates per-session board files.
+   Migrate it once: write its `project` block to `project.json`, write each run (with its
+   unit jobs) to `board/<RUN>.json` and each other job to `board/<JOB>.json`, then delete
+   `board.json`.
+2. Settle your floor (above).
+3. If `PROFILE` doesn't exist, run **Setup** and stop there.
+4. Copy `SKILL_DIR/assets/dashboard.html` over `FACTORY/dashboard.html` if they differ.
+5. Tidy up your own board file only: if your job is `merging` or your run `pushed`, check its
+   PR or MR (`gh pr view <url> --json state`, or `glab mr view <url> -F json`). If it is
+   merged, set `merged`. Never poll.
 
 The first time in a session, tell the user where to watch:
 `cd ~/.factory/<repo> && python3 -m http.server 8765`, then open
-<http://localhost:8765/dashboard.html>.
+<http://localhost:8765/dashboard.html>. If a dashboard is already being served there for
+another session, the same page shows yours too.
 
 ## Setup
 
-1. Create `FACTORY` from `SKILL_DIR/assets/`: copy `dashboard.html`, `backlog.md` and
-   `board.json` (skip any that already exist, except `dashboard.html`), and create `jobs/` and
-   `runs/`. Set `board.json`'s `floor` to `WORKTREE`.
+1. Create `FACTORY` with `board/`, `jobs/`, `runs/` and `claims/`. Copy `dashboard.html`
+   from `SKILL_DIR/assets/`, and `backlog.md` if there isn't one.
 2. Copy `SKILL_DIR/assets/README.md` to `WORKTREE/factory/README.md`. Spawn the `surveyor`. It
    inspects the repo and writes `PROFILE`.
-3. Copy the project's name, host and merge mode from `PROFILE` Settings into `board.json`'s
-   `project` block.
+3. Write the project's name, host and merge mode from `PROFILE` Settings to
+   `FACTORY/project.json`.
 4. Show the user the Settings table, and say in a line what the merge mode and the branch
    rules mean for them. Then stop and ask them to read `factory/project.md` (and commit it,
-   so teammates share it) before the first job. It governs what gets run, what gets pushed,
-   and what gets merged.
+   so teammates and other sessions share it) before the first job. It governs what gets
+   run, what gets pushed, and what gets merged.
+
+## Overlap with other sessions
+
+Two jobs or runs that change the same files will conflict when the second one merges. The
+factory can't prevent that, but it warns early, so you can sequence the work.
+
+- Every board file lists the repo paths its work touches in `files`: the planned paths
+  (from the plan's *Files this run touches*, or a job spec's *Files to touch*) as soon as
+  they're known, plus the actually changed paths
+  (`git -C <WORKTREE> diff --name-only <BASE_REF>...HEAD`) after each accepted unit or job.
+  Strip line ranges (`Foo.ts:620-700` → `Foo.ts`).
+- Two paths overlap when they're equal, or one is a folder containing the other.
+- **Check overlaps** by reading every other file in `FACTORY/board/` whose job or run isn't
+  `merged`, and intersecting its `files` with yours. Record the result in your run's or
+  job's `overlaps` as `[{ "with": "<id>", "title": "<title>", "files": [...] }]`.
+- Check after the plan (or a job's spec), and again after each accepted unit. When a new
+  overlap appears, tell the user in one line: what, with which run, and which files. Then
+  **continue**. An overlap is a warning, not a stop.
+- The dashboard also computes overlaps across every board file, so the warning appears on
+  both sides, even for a run that started after yours.
+- The final PR body lists any overlaps, so whoever merges second knows to expect conflicts.
 
 ## The job loop (shared by jobs and run units)
 
 **Spec.** Spawn `spec-writer` (`MODE=job`, or `MODE=unit` in a run). When it finishes,
-`spec.md` must exist. Copy its `# … — <feature>` title into the board's `title`, and set stage
+`spec.md` must exist. Copy its `# … — <feature>` title into the job's `title`, and set stage
 `build`.
 
-**Build.** Spawn `builder` with `name: builder-<JOB>`, and record that name in the board's
+**Build.** Spawn `builder` with `name: builder-<JOB>`, and record that name in the job's
 `builder` field. If your Agent tool has no `name` input, record the agent ID it returns and
 address the builder by that ID. When it finishes, `build.md` must exist and start with no
 `BLOCKED:` line. Go to round 1.
@@ -214,8 +262,8 @@ address the builder by that ID. When it finishes, `build.md` must exist and star
 **Review round N: WAIT FOR ALL.**
 1. `mkdir ROUND_DIR`. Set `stage: review`, `round: N`, and all four reviews to `pending`.
 2. Spawn all four reviewers **in a single message**, so they run in parallel.
-3. Each time one finishes, read the first line of its file and update its chip on the
-   board right away. The dashboard fills in as verdicts land.
+3. Each time one finishes, read the first line of its file and update its chip in `BOARD`
+   right away. The dashboard fills in as verdicts land.
 4. The round is done only when **all four files exist in ROUND_DIR**. Never resume the
    builder mid-round. If a reviewer finished without writing its file, spawn it again
    once. If there is still no file, move the job to `needs-human`.
@@ -241,17 +289,17 @@ why everything lives in files.
 
 ## Running a job
 
-1. **Start.** Put the floor on a fresh base, with **no branch yet**, so nothing is named
-   before the spec names it:
+1. **Start.** Claim `JOB` (`mkdir FACTORY/jobs/<JOB>`) and settle your floor. Put the floor on
+   a fresh base, with **no branch yet**, so nothing is named before the spec names it:
    ```bash
    git -C <WORKTREE> fetch origin <BASE>          # skip when Host is none
    git -C <WORKTREE> switch --detach <BASE_REF>
-   mkdir -p "<JOB_DIR>"
    ```
-   Record `git -C <WORKTREE> rev-parse HEAD` on the job as `startSha` (its `DIFF_BASE`).
-   Write the feature text, verbatim, to `JOB_DIR/feature.md`. Add the job to the board at
-   stage `spec`.
-2. **Spec** (`MODE=job`).
+   Record `git -C <WORKTREE> rev-parse HEAD` as the job's `startSha` (its `DIFF_BASE`). Write
+   the feature text, verbatim, to `JOB_DIR/feature.md`. Write `BOARD` with this job at stage
+   `spec`.
+2. **Spec** (`MODE=job`). Set the job's `files` from the spec's *Files to touch*, then check
+   overlaps.
 3. **Name the branch.** Read `**Branch:**` from `spec.md`. Refuse it, and set `needs-human`,
    if it breaks `PROFILE`'s Branch names rule, starts with `factory/`, or already exists
    (`git -C <WORKTREE> show-ref --verify refs/heads/<name>`, or
@@ -263,30 +311,33 @@ why everything lives in files.
 
 `/factory adr <ADR>` works through every buildable unit of the ADR, in order, on one branch.
 
-1. **Start the run.** Resolve the ADR path and `RUN`. Put the floor on a fresh base with no
-   branch, as in step 1 of a job. `mkdir -p <RUN_DIR>`. Add the run to the board at stage
-   `planning`, with no units yet.
+1. **Start the run.** Resolve the ADR path and `RUN`, and claim it (`mkdir FACTORY/runs/<RUN>`).
+   Settle your floor and put it on a fresh base with no branch, as in step 1 of a job. Write
+   `BOARD` with the run at stage `planning`, no units yet, and `floor` set to `WORKTREE`.
 2. **Plan.** Spawn `spec-writer` with `MODE=plan`, `ADR` and `RUN_DIR`. It writes
-   `RUN_DIR/plan.md`: every unit in build order, each one marked `build`, `skip:` or `ask:`.
+   `RUN_DIR/plan.md`: every unit in build order, each one marked `build`, `skip:` or `ask:`,
+   and the *Files this run touches*. Set the run's `files` from that list, then check
+   overlaps.
 3. **Name the branch.** Read `**Branch:**` from `plan.md`, check it as in step 3 of a job
    (it must follow `PROFILE`'s rule for ADR runs), then `git -C <WORKTREE> switch -c <name>`.
-   Fill in the run's `branch` and its units in plan order (see **board.json**), and set
+   Fill in the run's `branch` and its units in plan order (see **Board files**), and set
    stage `running`.
 4. **For each unit in plan order:**
    - `skip:` units are marked `skipped` and never built.
    - `ask:` units stop the run: set the run `paused`, its `reason` to the question, and tell
-     the user to answer with `/factory continue <answer>`.
-   - `build` units become a job. Create `JOB` and `JOB_DIR`, then write `feature.md` as
+     the user to answer with `/factory continue <RUN> <answer>`.
+   - `build` units become a job. Create `JOB_DIR`, then write `feature.md` as
      *"Unit <id> of <ADR>: <title>. Source: <source>. Adopt it; don't rewrite it."*, plus
      any answer the user gave. Set the job's `run`, `unit` and `branch`, and record
      `startSha = git -C <WORKTREE> rev-parse HEAD` as its `DIFF_BASE`. Mark the unit
      `active`.
 5. **Run the job loop** for that unit: spec (`MODE=unit`), then build, review and approve
-   (`MODE=adr`). Units run one at a time on the floor, each on top of the last.
+   (`MODE=adr`). Units run one at a time on your floor, each on top of the last.
 6. **Accept the unit** on `APPROVE` (or `/factory approve`). `git -C <WORKTREE> rev-parse
    HEAD` must equal `decision.md`'s `Reviewed-SHA:` (or, after a human approve, be recorded
-   as the reviewed commit). Set the job's stage `done`, the unit `done`, and go on to the next
-   unit. Never start a unit on top of an unreviewed commit.
+   as the reviewed commit). Set the job's stage `done` and the unit `done`. Add the unit's
+   changed paths to the run's `files`, check overlaps again, and go on to the next unit.
+   Never start a unit on top of an unreviewed commit.
 7. **When every `build` unit is done, push and open the preview PR:**
    - `git -C <WORKTREE> log --oneline <BASE_REF>..HEAD` must contain only the run's units.
    - Push exactly HEAD, and no tags:
@@ -302,6 +353,7 @@ why everything lives in files.
        reason);
      - every approver's **Flags for the PR reviewer**;
      - the plan's **Rollout gates**;
+     - any overlaps with other open runs or jobs, and their files;
      - one line on how to reach the preview, if `PROFILE` describes one.
 
      Add no AI attribution lines.
@@ -315,16 +367,21 @@ update themselves.
 
 ## Continuing a run
 
-`/factory continue [answer]` picks the active run back up, whether it paused on a question,
-or the session ended or was compacted mid-run. The run must continue on the floor recorded
-in `board.json`. If this session's checkout isn't that floor, enter it with `EnterWorktree`
-before anything else (or ask the user to open a session there).
+`/factory continue [run] [answer]` picks a run back up, whether it paused on a question, or
+its session ended or was compacted mid-run.
 
+- **Which run.** If a run id was given, use it. Otherwise use the open run whose `floor` is
+  this session's checkout. If there is none, list the open runs (their id, stage and floor)
+  and ask which one.
+- **Which floor.** A run continues on the floor recorded in its board file. If this session
+  isn't on it, enter it with `EnterWorktree`, but only after the user confirms that the
+  session that started the run has ended. Two sessions must never drive one run. You now own
+  that board file.
 - Paused on an `ask:` unit: append the answer to that unit's job `feature.md` (create the job
   as in step 4 if it doesn't exist yet) and build it.
 - Paused on a `needs-human` job: say so, and point at `/factory approve` or
   `/factory rework` for that job. Do nothing else.
-- Interrupted: read `board.json` and the job folders, and resume the unit at its recorded
+- Interrupted: read your board file and the job folders, and resume the unit at its recorded
   stage. If a stage's file is missing, re-run that stage's agent. A builder resumes as a fresh
   `builder-<JOB>`, rebuilding its context from the files.
 
@@ -337,10 +394,11 @@ wherever it says something more specific than this section.
    equal the `Reviewed-SHA:` line in `decision.md`. If it doesn't, stop and set
    `needs-human` with the reason "branch moved after approval".
 2. `git -C <WORKTREE> log --oneline <BASE_REF>..<SHA>` must list only this job's commits.
+   Add its changed paths to the job's `files` and check overlaps once more.
 3. Ship it according to the merge mode in `PROFILE` Settings. The title is the `PR title:`
    line from `spec.md`. The body is the one-paragraph summary from `spec.md`, its acceptance
-   criteria, each round's verdicts, and the decision (or "approved by a human with
-   /factory approve"). Add no AI attribution lines.
+   criteria, each round's verdicts, any overlaps, and the decision (or "approved by a human
+   with /factory approve"). Add no AI attribution lines.
 
 | Mode | Host | Do |
 |---|---|---|
@@ -355,13 +413,14 @@ If the output shows `[new tag]`, stop and tell the user. A tag rode along, and s
 treat a tag push as a release.
 
 4. Set stage `merging` and record the PR or MR URL in `url`. A `local` merge goes straight to
-   `merged`. The next `/factory` run flips `merging` to `merged` once the host has merged.
+   `merged`. A later `/factory` command in this session flips `merging` to `merged` once the
+   host has merged.
 
 ## Rework
 
 `/factory rework <job-id> <note>`:
 1. Append the note to `JOB_DIR/rework.md` under a `## <date>` heading.
-2. Make sure the floor is on the job's branch (`git -C <WORKTREE> switch <branch>`, refusing
+2. Make sure your floor is on the job's branch (`git -C <WORKTREE> switch <branch>`, refusing
    if the floor has other work in progress).
 3. If the note changes **what** gets built (scope or acceptance criteria), spawn
    `spec-writer` first. It revises `spec.md` and logs the change under `## Revisions`.
@@ -372,17 +431,20 @@ treat a tag push as a release.
    `running` again until the unit is accepted. Then continue with the next unit, or, if the
    run was already `pushed`, push again.
 
-## board.json
+## Board files
 
-It drives the dashboard. Rewrite the whole file on every change: write
-`board.json.tmp`, then `mv` it over `board.json`, so the dashboard never reads half a file.
-Bump `updated` at the top, and on every job or run you touch.
+Each one drives its part of the dashboard, which merges every file in `FACTORY/board/`.
+Rewrite your whole file on every change: write `<BOARD>.tmp` (the dashboard ignores names
+not ending in `.json`), then `mv` it over `BOARD`, so the dashboard never reads half a file.
+Bump `updated` at the top, and on the run or job you touched.
+
+A run's file holds the run and all of its unit jobs. A standalone job's file holds just that
+job, with an empty `runs`.
 
 ```json
 {
   "updated": "2026-10-20T14:40:00Z",
-  "floor": "/abs/path/to/the/floor",
-  "project": { "name": "Acme", "host": "gitlab", "merge": "auto-merge" },
+  "floor": "/abs/path/to/your/floor",
   "runs": [
     {
       "id": "0062-childrens-code-opt-in-tenant",
@@ -392,10 +454,14 @@ Bump `updated` at the top, and on every job or run you touch.
       "stage": "running",
       "reason": null,
       "url": null,
+      "files": ["apps/payload-core/src/globals/PartnerConfig.ts", "apps/site-core/src/lib/consentConfig.ts"],
+      "overlaps": [
+        { "with": "0070-partner-insights", "title": "ADR-0070 Partner insights", "files": ["apps/site-core/src/lib/consentConfig.ts"] }
+      ],
       "units": [
-        { "unit": "U0", "title": "Tenant policy fields", "status": "done", "job": "007-0062-u0-tenant-policy" },
+        { "unit": "U0", "title": "Tenant policy fields", "status": "done", "job": "0062-u0-tenant-policy" },
         { "unit": "U10", "title": "Ingest tag attribute", "status": "skipped", "reason": "lives in the meridian-ingest repo" },
-        { "unit": "U1", "title": "Profiling switch", "status": "active", "job": "008-0062-u1-profiling-switch" },
+        { "unit": "U1", "title": "Profiling switch", "status": "active", "job": "0062-u1-profiling-switch" },
         { "unit": "U2", "title": "Retention cap", "status": "queued" }
       ],
       "updated": "2026-10-20T14:40:00Z"
@@ -403,13 +469,13 @@ Bump `updated` at the top, and on every job or run you touch.
   ],
   "jobs": [
     {
-      "id": "008-0062-u1-profiling-switch",
+      "id": "0062-u1-profiling-switch",
       "run": "0062-childrens-code-opt-in-tenant",
       "unit": "U1",
       "title": "Profiling switch at every write",
       "branch": "feature/0062-childrens-code-opt-in-tenant",
       "startSha": "4f1c2a9",
-      "builder": "builder-008-0062-u1-profiling-switch",
+      "builder": "builder-0062-u1-profiling-switch",
       "stage": "review",
       "round": 2,
       "maxRound": 2,
@@ -420,6 +486,8 @@ Bump `updated` at the top, and on every job or run you touch.
       "decision": null,
       "reason": null,
       "url": null,
+      "files": [],
+      "overlaps": [],
       "started": "2026-10-20T14:02:00Z",
       "updated": "2026-10-20T14:40:00Z"
     }
@@ -429,23 +497,29 @@ Bump `updated` at the top, and on every job or run you touch.
 
 - Job `stage` is one of `spec`, `build`, `review`, `approval`, `needs-human`, `merging`,
   `merged`, or `done` (a run unit accepted onto the run's branch). A job outside a run has no
-  `run` or `unit`.
+  `run` or `unit`, and keeps its own `files` and `overlaps`.
 - Run `stage` is one of `planning`, `running`, `paused`, `pushed`, `merged`. A unit's `status`
   is one of `queued`, `active`, `done`, `skipped`, `ask`.
+- A floor is busy while any board file with that `floor` holds a job between `spec` and
+  `approval` or `needs-human`, or a run that is `planning`, `running` or `paused`.
 - `reviews` is the current round, and `history` holds the finished ones. Use `decision` for
   `APPROVE`, `ESCALATE` or `HUMAN-APPROVED`.
 
 ## Rules
 
 - Agents get their context from files, not from this conversation, and each one writes only
-  its own file. You write `board.json`, `backlog.md`, `feature.md` and `rework.md`.
+  its own file. You write your `BOARD`, `feature.md`, `rework.md`, and the backlog tick.
+  Never write another session's board file, job folder or run folder.
 - A review starts with `VERDICT: PASS` or `VERDICT: CHANGES`. `decision.md` starts with
   `APPROVE` or `ESCALATE`.
-- Branches are named by the spec-writer per `PROFILE` and created by you on the floor. Nothing
-  is ever named or pushed with a `factory/` prefix. The builder commits; it never pushes, and
-  it never stages `factory/`. Only Merge and the end of a run push.
+- Branches are named by the spec-writer per `PROFILE` and created by you on your floor.
+  Nothing is ever named or pushed with a `factory/` prefix. The builder commits; it never
+  pushes, and it never stages `factory/`. Only Merge and the end of a run push.
 - WAIT FOR ALL: a round is done only when every reviewer's file exists in the round folder.
 - The builder is one named agent per job (`builder-<JOB>`), resumed with `SendMessage` and
   pointed at the round folder each time. In a run, every unit gets a fresh builder.
-- Only one heavy process runs at a time. The builder runs tests, and reviewers read the
-  diff. The floor holds one job or one run at a time.
+- Heavy commands (installs, builds, typechecks, lints, test suites) run under
+  `FACTORY/tests.lock`, so builders in different sessions take turns. Specs and reviews still
+  run in parallel.
+- One job or run per floor, and one floor per session. Overlaps between sessions are
+  warnings, never stops.

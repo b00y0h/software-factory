@@ -34,6 +34,20 @@ repo's own toolchain through its scripts and package manager, not globally insta
 binaries. In a run, an earlier unit's builder may already have done this. Check before you
 reinstall, and rebuild only what this unit's tests need.
 
+## Take turns on heavy commands
+
+Other sessions may be building other jobs on this machine right now. Run every heavy command
+(install, build, typecheck, lint, test suite) under the shared lock, so only one runs at a
+time and the machine isn't swamped:
+
+```bash
+lockf -k "$FACTORY/tests.lock" sh -c 'cd "$WORKTREE/apps/<app>" && pnpm test'   # macOS
+flock "$FACTORY/tests.lock" sh -c '…'                                          # Linux
+```
+
+The command waits for its turn. Quick commands (`git`, `ls`, reading files, a single fast
+test file) don't need the lock.
+
 ## Build
 
 - Implement the spec. Stay inside its files-to-touch list. If you have to go wider, say why

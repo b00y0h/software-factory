@@ -121,6 +121,11 @@
   .run-foot { margin-top: 8px; font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
   .run-foot .alert { color: var(--alert); font-weight: 600; }
   .run .cmds { margin-top: 8px; }
+  .overlap { margin-top: 8px; font-size: 12px; color: var(--changes); }
+  .overlap summary { cursor: pointer; font-weight: 600; list-style: none; }
+  .overlap summary::-webkit-details-marker { display: none; }
+  .overlap summary::before { content: "⚠ "; }
+  .overlap ul { margin: 4px 0 0; padding-left: 18px; color: var(--muted); font-family: var(--mono); font-size: 11px; }
   .card-id { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .unit-tag { font: 600 10.5px var(--mono); color: var(--accent); background: var(--accent-bg); padding: 1px 5px; border-radius: 5px; flex: none; }
   .human .card { border-color: var(--alert-line); }
@@ -533,6 +538,7 @@
       <div class="card-title">${esc(job.title || job.id)}</div>
       <div class="state${job.stage === 'needs-human' ? ' alert' : ''}">${esc(stateLine(job))}</div>
       ${rounds.length ? `<div class="rounds">${rounds.map((r) => chipsRow(job, r)).join('')}</div>` : ''}
+      ${job.run ? '' : overlapHtml(job.id)}
       ${extra}
       <div class="card-foot"><span class="mono">${esc(job.branch || '')}</span><span><span data-ago="${esc(job.updated || job.started || '')}">${esc(ago(job.updated || job.started))}</span>${mr}</span></div>
     </article>`;
@@ -549,6 +555,44 @@
     return u.status || 'queued';
   }
   const RUN_ORDER = { running: 0, paused: 0, planning: 0, pushed: 1, merged: 2 };
+
+  // Overlaps: open runs and standalone jobs (from any session) whose files intersect. Two
+  // paths overlap when they're equal, or one is a folder containing the other.
+  let overlapsById = new Map();
+  const normPath = (p) => String(p).trim().replace(/^`|`$/g, '').replace(/:\d+(-\d+)?$/, '').replace(/^\.\//, '').replace(/\/$/, '');
+  const pathsOverlap = (x, y) => x === y || x.startsWith(y + '/') || y.startsWith(x + '/');
+  function computeOverlaps() {
+    const items = [
+      ...(board.runs || []).filter((r) => r.stage !== 'merged').map((r) => ({ id: r.id, title: r.title || r.id, files: r.files || [], recorded: r.overlaps || [] })),
+      ...(board.jobs || []).filter((j) => !j.run && j.stage !== 'merged').map((j) => ({ id: j.id, title: j.title || j.id, files: j.files || [], recorded: j.overlaps || [] })),
+    ];
+    const open = new Set(items.map((i) => i.id));
+    const out = new Map(items.map((i) => [i.id, new Map()]));
+    const note = (from, to, title, files) => {
+      const m = out.get(from); const prev = m.get(to);
+      m.set(to, { with: to, title, files: [...new Set([...(prev ? prev.files : []), ...files])] });
+    };
+    for (let i = 0; i < items.length; i++) {
+      for (let k = i + 1; k < items.length; k++) {
+        const a = items[i], b = items[k], shared = new Set();
+        for (const fa of a.files) for (const fb of b.files) {
+          const x = normPath(fa), y = normPath(fb);
+          if (x && y && pathsOverlap(x, y)) shared.add(x.length >= y.length ? x : y);
+        }
+        if (shared.size) { note(a.id, b.id, b.title, [...shared]); note(b.id, a.id, a.title, [...shared]); }
+      }
+      // what the orchestrator recorded counts too, while the other side is still open
+      for (const o of items[i].recorded) if (open.has(o.with)) note(items[i].id, o.with, o.title || o.with, (o.files || []).map(normPath));
+    }
+    overlapsById = new Map([...out].map(([id, m]) => [id, [...m.values()]]));
+  }
+  function overlapHtml(id) {
+    return (overlapsById.get(id) || []).map((o) => `<details class="overlap" data-stop>
+        <summary>Overlaps ${esc(o.title)} · ${o.files.length} file${o.files.length === 1 ? '' : 's'}</summary>
+        <ul>${o.files.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>
+      </details>`).join('');
+  }
+  const floorName = (p) => String(p || '').replace(/\/+$/, '').split('/').pop();
   function runHtml(run) {
     const units = Array.isArray(run.units) ? run.units : [];
     const statuses = units.map(unitStatus);
@@ -568,7 +612,7 @@
     }).join('');
     const url = run.url && /^https?:\/\//i.test(run.url) ? `<a href="${esc(run.url)}" target="_blank" rel="noopener">${prWord()}</a>` : '';
     const ask = stage === 'paused' && statuses.includes('ask');
-    const cmd = '/factory continue "<answer>"';
+    const cmd = `/factory continue ${run.id} "<answer>"`;
     return `<article class="run${stage === 'paused' ? ' paused' : ''}">
       <div class="run-head">
         <div style="min-width:0">
@@ -579,7 +623,8 @@
       </div>
       <div class="progress" aria-hidden="true"><i style="width:${pct}%"></i></div>
       <div class="units">${chips}</div>
-      <div class="run-foot"><span>${done} of ${buildable} units done${skipped ? ` · ${skipped} skipped` : ''}</span>${run.reason ? `<span class="alert">${esc(run.reason)}</span>` : ''}${url}</div>
+      <div class="run-foot"><span>${done} of ${buildable} units done${skipped ? ` · ${skipped} skipped` : ''}</span>${run.floor ? `<span title="${esc(run.floor)}">floor: ${esc(floorName(run.floor))}</span>` : ''}${run.reason ? `<span class="alert">${esc(run.reason)}</span>` : ''}${url}</div>
+      ${overlapHtml(run.id)}
       ${ask ? `<div class="cmds"><div class="cmd"><span>${esc(cmd)}</span><button class="copy" type="button" data-copy="${esc(cmd)}">Copy</button></div></div>` : ''}
     </article>`;
   }
@@ -589,6 +634,7 @@
     document.querySelectorAll('[data-job]').forEach((el) => firstPos.set(el.dataset.job, el.getBoundingClientRect()));
 
     const jobs = Array.isArray(board.jobs) ? board.jobs : [];
+    computeOverlaps();
     const byCol = Object.fromEntries(STAGES.map((s) => [s.key, []]));
     const human = [];
     for (const j of jobs) {
@@ -662,12 +708,30 @@
       .map((l) => l.match(/^\s*[-*]\s+\[ \]\s+(.+)$/)).filter(Boolean).map((m) => m[1].trim());
   }
   let lastBacklogFetch = 0;
+  const getText = (path) => fetch(path, { cache: 'no-store' }).then((r) => (r.ok ? r.text() : null)).catch(() => null);
+  // Every session writes only its own board/<id>.json; merge them all (plus a pre-0.3 board.json).
+  async function loadState() {
+    const [projectText, listing, legacy] = await Promise.all([getText('project.json'), getText('board/'), getText('board.json')]);
+    if (projectText == null && listing == null && legacy == null) throw new Error('found no project.json, board/ or board.json');
+    const names = listing ? [...new Set([...listing.matchAll(/href="([^"/?#]+\.json)"/g)].map((m) => decodeURIComponent(m[1])))].sort() : [];
+    const texts = await Promise.all(names.map((n) => getText('board/' + encodeURIComponent(n))));
+    const merged = { project: null, runs: [], jobs: [], updated: null };
+    try { merged.project = projectText ? JSON.parse(projectText) : null; } catch { /* rewritten mid-read; next poll */ }
+    const add = (doc) => {
+      if (!merged.project && doc.project) merged.project = doc.project;
+      for (const r of doc.runs || []) merged.runs.push({ ...r, floor: r.floor || doc.floor });
+      for (const j of doc.jobs || []) merged.jobs.push({ ...j, floor: j.floor || doc.floor });
+      if (doc.updated && (!merged.updated || doc.updated > merged.updated)) merged.updated = doc.updated;
+    };
+    for (const t of [...texts, legacy]) {
+      if (!t) continue;
+      try { add(JSON.parse(t)); } catch { /* a file mid-write; the next poll reads it */ }
+    }
+    return { merged, key: [projectText, legacy, ...names.map((n, i) => n + '\n' + texts[i])].join('\u0000') };
+  }
   async function poll() {
     try {
-      const res = await fetch('board.json', { cache: 'no-store' });
-      if (!res.ok) throw new Error('board.json: HTTP ' + res.status);
-      const text = await res.text();
-      const next = JSON.parse(text);
+      const { merged: next, key: stateKey } = await loadState();
       if (Date.now() - lastBacklogFetch > 8000) {
         lastBacklogFetch = Date.now();
         try {
@@ -676,16 +740,16 @@
         } catch { /* backlog is optional */ }
       }
       $('error').hidden = true;
-      setLive(true, next.updated ? 'Live · board ' + ago(next.updated) : 'Live');
-      const key = text + '|' + backlog.join('\n');
+      setLive(true, next.updated ? 'Live · updated ' + ago(next.updated) : 'Live');
+      const key = stateKey + '|' + backlog.join('\n');
       if (key !== lastKey) { lastKey = key; board = next; render(); }
     } catch (err) {
       setLive(false, 'Offline');
       const e = $('error');
       e.hidden = false;
       e.innerHTML = location.protocol === 'file:'
-        ? 'Open this page through a server so it can read <code>board.json</code>: <code>cd ~/.factory/&lt;repo&gt; &amp;&amp; python3 -m http.server 8765</code>, then <code>http://localhost:8765/dashboard.html</code>.'
-        : `Can't read <code>board.json</code> (${esc(err.message)}). Retrying…`;
+        ? 'Open this page through a server so it can read the factory state: <code>cd ~/.factory/&lt;repo&gt; &amp;&amp; python3 -m http.server 8765</code>, then <code>http://localhost:8765/dashboard.html</code>.'
+        : `Can't read the factory state (${esc(err.message)}). Retrying…`;
       if (firstRender) render();
     }
   }
@@ -787,6 +851,7 @@
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && openKey) { closeDrawer(); return; }
+    if (e.target.closest?.('[data-stop], summary, button, a')) return;   // let them handle their own keys
     const card = e.target.closest?.('[data-job]');
     if (card && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openDrawer(card.dataset.job); }
   });
@@ -807,31 +872,43 @@
     const t = Date.now(); const at = (min) => new Date(t - min * 60000).toISOString();
     const all = (v) => ({ security: v, ux: v, ui: v, code: v });
     const job = (n, slug, title, extra) => ({ id: `${n}-${slug}`, title, branch: `feature/${slug}`, round: 0, maxRound: 2, reviews: all('pending'), history: [], decision: null, reason: null, url: null, started: at(90), updated: at(5), ...extra });
-    const runBranch = 'feature/0007-visitor-rate-limits';
-    const inRun = (unit) => ({ run: '0007-visitor-rate-limits', unit, branch: runBranch });
+    // Two ADR runs from two sessions (two floors), sharing a file, plus loose jobs.
+    const unitJob = (run, unit, slug, title, extra) => ({ ...job('', '', title, extra), id: `${run.split('-')[0]}-${unit.toLowerCase()}-${slug}`,
+      run, unit, branch: `feature/${run}` });
     return {
       project: { name: 'Sample project', host: 'github', merge: 'auto-merge' },
       runs: [{
-        id: '0007-visitor-rate-limits', title: 'ADR-0007 Visitor rate limits (sample)', branch: runBranch,
-        stage: 'running', reason: null, url: null, updated: at(3),
+        id: '0007-visitor-rate-limits', title: 'ADR-0007 Visitor rate limits (sample)', branch: 'feature/0007-visitor-rate-limits',
+        floor: '/work/sample/.claude/worktrees/brave-otter', stage: 'running', reason: null, url: null, updated: at(3),
+        files: ['apps/api/src/forms/submit.ts', 'apps/api/src/limits/', 'apps/web/src/consent/config.ts', 'docs/runbooks/rate-limits.md'],
         units: [
-          { unit: 'U0', title: 'Policy fields and resolvers', status: 'done', job: '007-0007-u0-policy-fields' },
-          { unit: 'U1', title: 'Limiter on the submit endpoint', status: 'active', job: '008-0007-u1-submit-limiter' },
+          { unit: 'U0', title: 'Policy fields and resolvers', status: 'done', job: '0007-u0-policy-fields' },
+          { unit: 'U1', title: 'Limiter on the submit endpoint', status: 'active', job: '0007-u1-submit-limiter' },
           { unit: 'U2', title: 'Edge rule', status: 'skipped', reason: 'lives in the infra repo' },
           { unit: 'U3', title: 'Dashboard limits card', status: 'queued' },
           { unit: 'U4', title: 'Operator runbook', status: 'queued' },
         ],
+      }, {
+        id: '0009-consent-banner-v2', title: 'ADR-0009 Consent banner v2 (sample)', branch: 'feature/0009-consent-banner-v2',
+        floor: '/work/sample/.claude/worktrees/quiet-heron', stage: 'running', reason: null, url: null, updated: at(2),
+        files: ['apps/web/src/consent/config.ts', 'apps/web/src/consent/Banner.tsx'],
+        units: [
+          { unit: 'U0', title: 'Banner categories', status: 'active', job: '0009-u0-banner-categories' },
+          { unit: 'U1', title: 'Consent mode signals', status: 'queued' },
+        ],
       }],
       jobs: [
-        job('007', '0007-u0-policy-fields', 'Policy fields and resolvers', { ...inRun('U0'), stage: 'done', round: 1, reviews: all('PASS'), decision: 'APPROVE', updated: at(12) }),
-        job('008', '0007-u1-submit-limiter', 'Limiter on the submit endpoint', { ...inRun('U1'), stage: 'review', round: 1,
+        unitJob('0007-visitor-rate-limits', 'U0', 'policy-fields', 'Policy fields and resolvers', { stage: 'done', round: 1, reviews: all('PASS'), decision: 'APPROVE', updated: at(12) }),
+        unitJob('0007-visitor-rate-limits', 'U1', 'submit-limiter', 'Limiter on the submit endpoint', { stage: 'review', round: 1,
           reviews: { security: 'pending', ux: 'PASS', ui: 'PASS', code: 'pending' } }),
+        unitJob('0009-consent-banner-v2', 'U0', 'banner-categories', 'Banner categories', { stage: 'build' }),
         job('001', 'sitemap-lastmod', 'Add lastmod to tenant sitemaps', { stage: 'merged', round: 1, reviews: all('PASS'), decision: 'APPROVE', updated: at(140) }),
         job('002', 'preview-link-copy', 'Copy button for page preview links', { stage: 'needs-human', round: 2, decision: null,
           reviews: { security: 'PASS', ux: 'CHANGES', ui: 'PASS', code: 'PASS' },
           history: [{ round: 1, reviews: { security: 'PASS', ux: 'CHANGES', ui: 'CHANGES', code: 'PASS' } }],
           reason: 'Review rounds used up: ux still wants focus to return to the row after copying.', updated: at(25) }),
         job('003', 'rate-limiting', 'Rate-limit the public form submit endpoint', { stage: 'review', round: 2,
+          files: ['apps/api/src/forms/submit.ts'],
           reviews: { security: 'pending', ux: 'PASS', ui: 'pending', code: 'PASS' },
           history: [{ round: 1, reviews: { security: 'CHANGES', ux: 'PASS', ui: 'CHANGES', code: 'PASS' } }] }),
         job('004', 'media-empty-state', 'Empty state for the Media Library', { stage: 'build' }),
@@ -855,7 +932,7 @@
       const next = run.units.find((u, i) => statuses[i] === 'queued');
       run.updated = now;
       if (!next) { run.stage = 'pushed'; continue; }
-      const id = `${String(board.jobs.length + 1).padStart(3, '0')}-${run.id.split('-')[0]}-${next.unit.toLowerCase()}-${slugOf(next.title, 2)}`;
+      const id = `${run.id.split('-')[0]}-${next.unit.toLowerCase()}-${slugOf(next.title, 2)}`;
       next.job = id; next.status = 'active';
       board.jobs.push({ id, run: run.id, unit: next.unit, title: next.title, branch: run.branch, stage: 'spec', round: 0, maxRound: 2,
         reviews: pendingReviews(), history: [], started: now, updated: now });
@@ -904,8 +981,10 @@
   }
   function demoFile(job, path) {
     const st = job.stage;
-    const branchMsg = `**Job:** ${job.id} · **Branch:** ${job.branch}` + (job.unit ? `\n**Unit:** ${job.unit} of ADR-0007 · **Source:** docs/adr/0007-execution-plan.md#${job.unit.toLowerCase()}` : '');
-    if (path === 'feature.md') return job.unit ? `Unit ${job.unit} of ADR-0007: ${job.title}. Source: docs/adr/0007-execution-plan.md#${job.unit.toLowerCase()}. Adopt it; don't rewrite it.` : job.title + '.';
+    const adr = (job.run || '').split('-')[0];
+    const source = `docs/adr/${adr}-execution-plan.md#${(job.unit || '').toLowerCase()}`;
+    const branchMsg = `**Job:** ${job.id} · **Branch:** ${job.branch}` + (job.unit ? `\n**Unit:** ${job.unit} of ADR-${adr} · **Source:** ${source}` : '');
+    if (path === 'feature.md') return job.unit ? `Unit ${job.unit} of ADR-${adr}: ${job.title}. Source: ${source}. Adopt it; don't rewrite it.` : job.title + '.';
     if (path === 'spec.md') return st === 'spec' ? null :
       `# Sample project — ${job.title}\n\n${branchMsg}\n**PR title:** feat(sample): ${job.title.charAt(0).toLowerCase() + job.title.slice(1)}\n\n> Sample spec from the dashboard's demo mode. A real one is written by the spec-writer, built on spec-author.\n\n## Problem\nWhat is wrong today, for whom, and what it costs them.\n\n## Files to touch\n| File | Change |\n|---|---|\n| \`apps/dashboard-ui/src/…\` | the change |\n| \`apps/dashboard-ui/tests/…\` | a test per acceptance criterion |\n\n## Acceptance criteria\n1. **AC-1** The new behavior works on the happy path.\n2. **AC-2** Errors say what happened and what to do next.\n\n## What this is NOT\n- Anything beyond one MR.\n\n## Open questions\n- None.`;
     if (path === 'build.md') return (st === 'spec' || (st === 'build' && !job.round)) ? null :
@@ -927,8 +1006,10 @@
 
   function demoRunFile(run, path) {
     if (path !== 'plan.md') return null;
-    const rows = run.units.map((u, i) => `| ${i + 1} | ${u.unit} | ${u.title} | ${u.status === 'skipped' ? 'skip: ' + u.reason : 'build'} | ${i === 0 ? 'none' : 'U0'} | 0007-execution-plan.md#${u.unit.toLowerCase()} |`).join('\n');
-    return `# Run plan — ${run.title}\n\n**ADR:** docs/adr/0007-visitor-rate-limits.md · **Plan:** docs/adr/0007-execution-plan.md\n**Branch:** ${run.branch}\n**PR title:** feat(limits): visitor rate limits (ADR-0007)\n\n> Sample plan from the dashboard's demo mode. A real one is written by the spec-writer.\n\n## Units, in build order\n| # | Unit | Title | Decision | Depends on | Source |\n|---|---|---|---|---|---|\n${rows}\n\n## Rollout gates\n- U2's edge rule is deployed before the limiter is switched on in production.\n\n## Why this order\nU0 adds the fields every later unit reads. U3 and U4 describe what U1 builds.`;
+    const adr = run.id.split('-')[0];
+    const rows = run.units.map((u, i) => `| ${i + 1} | ${u.unit} | ${u.title} | ${u.status === 'skipped' ? 'skip: ' + u.reason : 'build'} | ${i === 0 ? 'none' : 'U0'} | ${adr}-execution-plan.md#${u.unit.toLowerCase()} |`).join('\n');
+    const files = (run.files || []).map((f) => `- \`${f}\``).join('\n');
+    return `# Run plan — ${run.title}\n\n**ADR:** docs/adr/${run.id}.md · **Plan:** docs/adr/${adr}-execution-plan.md\n**Branch:** ${run.branch}\n**PR title:** feat(sample): ${run.title.replace(/^ADR-\d+ /, '').replace(/ \(sample\)$/, '').toLowerCase()} (ADR-${adr})\n\n> Sample plan from the dashboard's demo mode. A real one is written by the spec-writer.\n\n## Units, in build order\n| # | Unit | Title | Decision | Depends on | Source |\n|---|---|---|---|---|---|\n${rows}\n\n## Rollout gates\n- Anything another team deploys or configures goes here, never blocking a build.\n\n## Why this order\nU0 adds what every later unit reads.\n\n## Files this run touches\n${files}`;
   }
 
   // ---------- start ----------

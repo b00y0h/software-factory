@@ -26,7 +26,7 @@ Start a new session afterwards so the skill and agents load.
 ```text
 /factory init                    survey this repo and write factory/project.md
 /factory adr <ADR>               build every buildable unit of an ADR, in order, then open one preview PR
-/factory continue [answer]       resume a run, or answer the question it paused on
+/factory continue [run] [answer] resume a run, or answer the question it paused on
 /factory <feature>               run a new job through the loop
 /factory next                    run the first unchecked item in the backlog
 /factory approve <job-id>        accept a job that is waiting on a human
@@ -92,14 +92,38 @@ preview updates.
 ## Where things live
 
 - **`factory/project.md`**, in the repo and committed: the profile every agent reads.
-- **`~/.factory/<repo>/`**, on your machine: the board, the backlog, run plans, one folder per
-  job, and the dashboard. It sits outside every checkout, so any session can pick a run
-  back up.
+- **`~/.factory/<repo>/`**, on your machine: one board file per job or run (`board/<id>.json`,
+  each written only by the session that owns it), the backlog, run plans, one folder per
+  job, and the dashboard. It sits outside every checkout, so every session shares it and any
+  session can pick a run back up.
 - **The floor**: the one checkout where the builder works, which is the factory session's own
   worktree. Claude Code lets a worktree session edit files only in its own worktree, so the
   factory builds there, switching its branch per job or run. Started from a repo's main
   checkout, `/factory` first moves into `.claude/worktrees/factory`, so your main checkout
   never changes branch. The floor holds one job or one run at a time.
+
+## Several sessions at once
+
+Open one Claude Code session per ADR (or job), and run `/factory adr <ADR>` in each. They
+run side by side:
+
+- **One floor each.** Every session builds in its own worktree. A session's floor holds one
+  job or run at a time, and two sessions can never claim the same run or job id.
+- **One dashboard.** Each session writes only its own `board/<id>.json`, and the dashboard
+  merges them all, showing which floor each run is on. Serve it once; every session's work
+  appears there.
+- **One profile.** Every session reads the same `factory/project.md`, and only `/factory init`
+  writes it.
+- **Taking turns on the heavy work.** Builders run installs, builds, typechecks, lints and test
+  suites under a shared lock (`~/.factory/<repo>/tests.lock`), so two sessions never swamp
+  the machine with test suites at once. Specs and reviews still run in parallel.
+- **Overlap warnings.** Each run lists the files it plans to touch, and later the files it did
+  touch. When two open runs or jobs share a file (or one touches a folder the other changes
+  inside), both cards show a warning, the session says so when it notices, and the PR body
+  lists it. Whichever merges second will need to resolve conflicts. It's a warning, never a
+  stop.
+
+`/factory continue <run>` picks a specific run back up, for example after its session ended.
 
 ## Branches and merging
 

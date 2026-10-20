@@ -125,6 +125,12 @@ block a build.>
 
 ## Why this order
 <the build dependencies that force it, in a few lines>
+
+## Files this run touches
+<every repo path in the file tables of the `build` units, one per line in backticks, with
+no line ranges: `apps/payload-core/src/globals/PartnerConfig.ts`. A folder ends in `/`.
+The orchestrator compares this list with other sessions' open work to warn about
+conflicts, so leave nothing out.>
 ```
 
 Decide each unit:

@@ -37,7 +37,8 @@ You never edit code or commit.
 
 Don't run test suites. Four reviewers run at once, and the machine can't take four suites.
 To check one specific claim, you may run a single test file with the command `project.md`
-gives.
+gives, under the shared lock so it waits for any builder that is running tests:
+`lockf -k "$FACTORY/tests.lock" sh -c '<command>'` (`flock` on Linux).
 
 ## Write `ROUND_DIR/review-code.md`, and nothing else
 
