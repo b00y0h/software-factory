@@ -40,13 +40,14 @@ breaks, the security hot spots, the users, the branch names, any preview environ
 how this repo merges. Every other agent reads it first. Read it, fix anything wrong, then run
 `/factory` again.
 
-Watch the board:
+Watch the board: `/factory` starts the dashboard for you on its first command, opens it in
+your browser, and gives you the link (normally <http://localhost:8765/dashboard.html>).
+Sessions share one dashboard per repo, served on localhost only, and it keeps running after
+the session ends. Add `?demo` to the link to see it run on sample data. To serve it by hand:
 
 ```bash
-cd ~/.factory/<repo> && python3 -m http.server 8765
+python3 -m http.server 8765 --bind 127.0.0.1 --directory ~/.factory/<repo>
 ```
-
-Then open <http://localhost:8765/dashboard.html>, or add `?demo` to see it run on sample data.
 
 ## How a job runs
 

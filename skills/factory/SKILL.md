@@ -205,19 +205,22 @@ Before any command:
 2. Settle your floor (above).
 3. If `PROFILE` doesn't exist, run **Setup** and stop there.
 4. Copy `SKILL_DIR/assets/dashboard.html` over `FACTORY/dashboard.html` if they differ.
-5. Tidy up your own board file only: if your job is `merging` or your run `pushed`, check its
+5. **Start the dashboard.** Run `bash "<SKILL_DIR>/scripts/dashboard.sh" "<FACTORY>" --open`.
+   It reuses a server that any session already started for this repo, or starts one on
+   localhost (from port 8765 up) that keeps running after this session. It prints
+   `running <url>` or `started <url>`, and opens the browser only when it started one. Give
+   the user the link the first time in a session, and whenever it says `started`. Every
+   session's work shows on that one page. If the script fails, say why in one line and carry
+   on: the dashboard is a view, never a blocker.
+6. Tidy up your own board file only: if your job is `merging` or your run `pushed`, check its
    PR or MR (`gh pr view <url> --json state`, or `glab mr view <url> -F json`). If it is
    merged, set `merged`. Never poll.
-
-The first time in a session, tell the user where to watch:
-`cd ~/.factory/<repo> && python3 -m http.server 8765`, then open
-<http://localhost:8765/dashboard.html>. If a dashboard is already being served there for
-another session, the same page shows yours too.
 
 ## Setup
 
 1. Create `FACTORY` with `board/`, `jobs/`, `runs/` and `claims/`. Copy `dashboard.html`
-   from `SKILL_DIR/assets/`, and `backlog.md` if there isn't one.
+   from `SKILL_DIR/assets/`, and `backlog.md` if there isn't one. Start the dashboard (step 5
+   above), so the user can watch the setup too.
 2. Copy `SKILL_DIR/assets/README.md` to `WORKTREE/factory/README.md`. Spawn the `surveyor`. It
    inspects the repo and writes `PROFILE`.
 3. Write the project's name, host and merge mode from `PROFILE` Settings to

@@ -34,14 +34,13 @@ on heavy commands such as test suites, and warn when two of them touch the same 
 /factory rework <job-id> <note>  send a job back to the builder with feedback
 ```
 
-Watch it:
+Watch it: `/factory` starts the dashboard on its first command, opens it in your browser, and
+gives you the link (normally <http://localhost:8765/dashboard.html>). Every session's work
+shows there. Add `?demo` to see it running on sample data. To serve it by hand:
 
 ```bash
-cd ~/.factory/<repo> && python3 -m http.server 8765
+python3 -m http.server 8765 --bind 127.0.0.1 --directory ~/.factory/<repo>
 ```
-
-Then open <http://localhost:8765/dashboard.html>. Add `?demo` to see it running on sample
-data.
 
 ## Branches and merging
 

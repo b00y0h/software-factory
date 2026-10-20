@@ -8,7 +8,8 @@
   The factory's dashboard. The master copy lives in the software-factory plugin
   (skills/factory/assets/) and is copied into each repo's state folder, ~/.factory/<repo>/,
   on every run, so edit it there. Self-contained: no build step, no network beyond this folder.
-  Serve this folder:  cd ~/.factory/<repo> && python3 -m http.server 8765
+  /factory serves this folder itself (skills/factory/scripts/dashboard.sh). By hand:
+  python3 -m http.server 8765 --bind 127.0.0.1 --directory ~/.factory/<repo>
   Then open:          http://localhost:8765/dashboard.html   (add ?demo to see sample data)
   It polls board.json (written only by the /factory orchestrator) and reads job markdown on click.
 -->
@@ -748,7 +749,7 @@
       const e = $('error');
       e.hidden = false;
       e.innerHTML = location.protocol === 'file:'
-        ? 'Open this page through a server so it can read the factory state: <code>cd ~/.factory/&lt;repo&gt; &amp;&amp; python3 -m http.server 8765</code>, then <code>http://localhost:8765/dashboard.html</code>.'
+        ? 'Open this page through a server so it can read the factory state: <code>python3 -m http.server 8765 --bind 127.0.0.1 --directory ~/.factory/&lt;repo&gt;</code>, then <code>http://localhost:8765/dashboard.html</code>.'
         : `Can't read the factory state (${esc(err.message)}). Retrying…`;
       if (firstRender) render();
     }
