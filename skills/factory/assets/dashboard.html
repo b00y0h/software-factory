@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="factory-dashboard-version" content="6">
 <title>Software Factory</title>
 <!--
   The factory's dashboard. The master copy lives in the software-factory plugin
@@ -25,6 +26,9 @@
     --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .08);
     --shadow-lift: 0 6px 16px rgba(16, 24, 40, .12);
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    /* one color per feature (a run, or a job on its own), so its cards are easy to follow */
+    --id-1: #7c3aed; --id-2: #0f766e; --id-3: #be185d; --id-4: #0369a1;
+    --id-5: #4d7c0f; --id-6: #a16207; --id-7: #475569; --id-8: #9f1239;
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
@@ -37,6 +41,8 @@
       --alert: #ff8a57; --alert-bg: rgba(255, 138, 87, .10); --alert-line: rgba(255, 138, 87, .45);
       --opus: #b7a2ff; --opus-bg: rgba(183, 162, 255, .14); --sonnet: #62d3dc; --sonnet-bg: rgba(98, 211, 220, .13);
       --shadow: 0 1px 2px rgba(0, 0, 0, .4); --shadow-lift: 0 8px 22px rgba(0, 0, 0, .5);
+      --id-1: #a78bfa; --id-2: #2dd4bf; --id-3: #f472b6; --id-4: #38bdf8;
+      --id-5: #a3e635; --id-6: #facc15; --id-7: #94a3b8; --id-8: #fb7185;
       color-scheme: dark;
     }
   }
@@ -49,6 +55,8 @@
     --alert: #ff8a57; --alert-bg: rgba(255, 138, 87, .10); --alert-line: rgba(255, 138, 87, .45);
     --opus: #b7a2ff; --opus-bg: rgba(183, 162, 255, .14); --sonnet: #62d3dc; --sonnet-bg: rgba(98, 211, 220, .13);
     --shadow: 0 1px 2px rgba(0, 0, 0, .4); --shadow-lift: 0 8px 22px rgba(0, 0, 0, .5);
+    --id-1: #a78bfa; --id-2: #2dd4bf; --id-3: #f472b6; --id-4: #38bdf8;
+    --id-5: #a3e635; --id-6: #facc15; --id-7: #94a3b8; --id-8: #fb7185;
     color-scheme: dark;
   }
 
@@ -104,6 +112,12 @@
   .runs { margin: 0 24px 16px; display: grid; gap: 10px; }
   .run { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; box-shadow: var(--shadow); }
   .run.paused { border-color: var(--alert-line); }
+  /* a feature's color: a stripe down the left of its run and of every card that belongs to it */
+  .run.tagged { box-shadow: inset 5px 0 0 var(--c), var(--shadow); padding-left: 19px; }
+  .card.tagged { box-shadow: inset 4px 0 0 var(--c), var(--shadow); padding-left: 16px; }
+  .card.tagged:hover { box-shadow: inset 4px 0 0 var(--c), var(--shadow-lift); }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: var(--c); margin-right: 7px; vertical-align: 0; flex: none; }
+  .unit-tag.tagged { color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
   .run-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   .run-title { all: unset; cursor: pointer; display: block; margin-top: 2px; font-weight: 650; font-size: 14px; }
   .run-title:hover { text-decoration: underline; }
@@ -518,8 +532,29 @@
       }).join('') + '</div>';
   }
 
+  // Each feature (a run, or a job that isn't part of one) gets its own color, and it stays put:
+  // the id hashes to a slot, and on a clash the later id (alphabetically) takes the next free one.
+  const PALETTE = 8;
+  let colorSlot = new Map();
+  function assignColors() {
+    const keys = [...new Set([...(board.runs || []).map((r) => r.id),
+      ...(board.jobs || []).filter((j) => !j.run).map((j) => j.id)])].sort();
+    const taken = new Set();
+    colorSlot = new Map();
+    for (const k of keys) {
+      if (taken.size === PALETTE) taken.clear();   // more features than colors: start reusing
+      let slot = hash(k) % PALETTE;
+      while (taken.has(slot)) slot = (slot + 1) % PALETTE;
+      taken.add(slot);
+      colorSlot.set(k, slot);
+    }
+  }
+  const colorOf = (key) => (colorSlot.has(key) ? `--c: var(--id-${colorSlot.get(key) + 1})` : '');
+
   function cardHtml(job, inStrip) {
     const rounds = roundsOf(job);
+    const color = colorOf(job.run || job.id);
+    const adr = job.run ? job.run.split('-')[0] : '';
     const working = ACTIVE.has(job.stage);
     let badge = '';
     if (job.stage === 'merged') badge = '<span class="badge pass">merged</span>';
@@ -537,8 +572,8 @@
         [approve, rework].map((c) => `<div class="cmd"><span>${esc(c)}</span><button class="copy" type="button" data-copy="${esc(c)}" data-stop>Copy</button></div>`).join('') +
         `</div>`;
     }
-    return `<article class="card" tabindex="0" role="button" data-job="${esc(job.id)}" aria-label="${esc((job.title || job.id) + ', ' + stateLine(job))}">
-      <div class="card-top"><span class="card-id">${job.unit ? `<span class="unit-tag" title="${esc('unit of ' + (job.run || 'a run'))}">${esc(job.unit)}</span>` : ''}<span class="job-id">${esc(job.id)}</span></span>${working ? '<span class="working" title="an agent is working"></span>' : badge}</div>
+    return `<article class="card${color ? ' tagged' : ''}" style="${color}" tabindex="0" role="button" data-job="${esc(job.id)}" aria-label="${esc((job.title || job.id) + ', ' + stateLine(job))}">
+      <div class="card-top"><span class="card-id">${job.unit ? `<span class="unit-tag${color ? ' tagged' : ''}" title="${esc('unit of ' + (job.run || 'a run'))}">${esc(adr ? adr + ' · ' + job.unit : job.unit)}</span>` : ''}<span class="job-id">${esc(job.id)}</span></span>${working ? '<span class="working" title="an agent is working"></span>' : badge}</div>
       <div class="card-title">${esc(job.title || job.id)}</div>
       <div class="state${job.stage === 'needs-human' ? ' alert' : ''}">${esc(stateLine(job))}</div>
       ${rounds.length ? `<div class="rounds">${rounds.map((r) => chipsRow(job, r)).join('')}</div>` : ''}
@@ -623,11 +658,12 @@
     const url = run.url && /^https?:\/\//i.test(run.url) ? `<a href="${esc(run.url)}" target="_blank" rel="noopener">${prWord()}</a>` : '';
     const ask = stage === 'paused' && statuses.includes('ask');
     const cmd = `/factory continue ${run.id} "<answer>"`;
-    return `<article class="run${stage === 'paused' ? ' paused' : ''}">
+    const color = colorOf(run.id);
+    return `<article class="run${color ? ' tagged' : ''}${stage === 'paused' ? ' paused' : ''}" style="${color}">
       <div class="run-head">
         <div style="min-width:0">
           <div class="job-id">${esc(run.branch || '')}</div>
-          <button type="button" class="run-title" data-open-run="${esc(run.id)}" title="Read the run plan">${esc(run.title || run.id)}</button>
+          <button type="button" class="run-title" data-open-run="${esc(run.id)}" title="Read the run plan">${color ? '<span class="swatch" aria-hidden="true"></span>' : ''}${esc(run.title || run.id)}</button>
         </div>
         <span class="badge ${badge}">${esc(label)}</span>
       </div>
@@ -645,6 +681,7 @@
 
     const jobs = Array.isArray(board.jobs) ? board.jobs : [];
     computeOverlaps();
+    assignColors();
     const byCol = Object.fromEntries(STAGES.map((s) => [s.key, []]));
     const human = [];
     for (const j of jobs) {

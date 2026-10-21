@@ -1,6 +1,6 @@
 {
   "name": "software-factory",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "A software factory in one command. /factory takes a feature, or every unit of an ADR in build order, through a spec, a build, four parallel reviews (security, UX, UI, code), and an approver, then merges it, opens a preview PR, or stops and asks you. Works in any repo; a live dashboard shows every job.",
   "author": { "name": "Bob Smith" },
   "repository": "https://github.com/b00y0h/software-factory",

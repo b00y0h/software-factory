@@ -206,7 +206,9 @@ Before any command:
    `board.json`.
 2. Settle your floor (above).
 3. If `PROFILE` doesn't exist, run **Setup** and stop there.
-4. Copy `SKILL_DIR/assets/dashboard.html` over `FACTORY/dashboard.html` if they differ.
+4. Copy `SKILL_DIR/assets/dashboard.html` to `FACTORY/dashboard.html` if that file is missing, or
+   if its `factory-dashboard-version` meta tag is lower than this skill's (a session on an
+   older plugin must never replace a newer dashboard).
 5. **Start the dashboard.** Run `bash "<SKILL_DIR>/scripts/dashboard.sh" "<FACTORY>" --open`.
    It reuses a server that any session already started for this repo, or starts one on
    localhost (from port 8765 up) that keeps running after this session. It prints

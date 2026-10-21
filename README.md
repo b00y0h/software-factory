@@ -130,8 +130,9 @@ run side by side:
 - **One floor each.** Every session builds in its own worktree. A session's floor holds one
   job or run at a time, and two sessions can never claim the same run or job id.
 - **One dashboard.** Each session writes only its own `board/<id>.json`, and the dashboard
-  merges them all, showing which floor each run is on. Serve it once; every session's work
-  appears there.
+  merges them all, showing which floor each run is on. Every run, and every job that isn't
+  part of one, gets its own color: a stripe down its run and down each of its cards, whose
+  tag also names the ADR (`0062 · U18`). Serve it once; every session's work appears there.
 - **One profile.** Every session reads the same `factory/project.md`, and only `/factory init`
   writes it.
 - **Taking turns on the heavy work.** Builders run installs, builds, typechecks, lints and test
