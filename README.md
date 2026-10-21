@@ -133,6 +133,9 @@ run side by side:
   merges them all, showing which floor each run is on. Every run, and every job that isn't
   part of one, gets its own color: a stripe down its run and down each of its cards, whose
   tag also names the ADR (`0062 · U18`). Serve it once; every session's work appears there.
+  When a run's PR merges (or a job's), its strip and cards leave the board for the **Shipped**
+  list at the bottom: a permanent record of everything the factory has finished, with its
+  units, branch, PR and plan.
 - **One profile.** Every session reads the same `factory/project.md`, and only `/factory init`
   writes it.
 - **Taking turns on the heavy work.** Builders run installs, builds, typechecks, lints and test

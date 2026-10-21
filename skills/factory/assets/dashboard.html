@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="factory-dashboard-version" content="6">
+<meta name="factory-dashboard-version" content="7">
 <title>Software Factory</title>
 <!--
   The factory's dashboard. The master copy lives in the software-factory plugin
@@ -110,6 +110,25 @@
 
   /* ---------- ADR runs: one strip per run, a chip per unit ---------- */
   .runs { margin: 0 24px 16px; display: grid; gap: 10px; }
+
+  /* ---------- shipped: the record of finished runs and jobs ---------- */
+  .history { margin: 0 24px 20px; }
+  .history details { background: var(--surface-2); border-radius: 14px; padding: 10px 14px; }
+  .history summary { cursor: pointer; font-weight: 650; font-size: 13px; padding: 4px 0; display: flex; align-items: baseline; gap: 10px; }
+  .hist-hint { font-weight: 400; color: var(--faint); font-size: 12px; }
+  .history-list { margin-top: 6px; }
+  .hist {
+    display: grid; grid-template-columns: auto minmax(0, 2.2fr) minmax(0, 1.6fr) minmax(0, 1.6fr) auto;
+    align-items: center; gap: 4px 12px; padding: 8px 4px; border-top: 1px solid var(--border); font-size: 12.5px;
+  }
+  .hist:first-child { border-top: 0; }
+  .hist .swatch { margin-right: 0; }
+  .hist-title { all: unset; cursor: pointer; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hist-title:hover { text-decoration: underline; }
+  .hist-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .hist-meta { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hist-meta.mono { font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+  .hist-when { color: var(--faint); white-space: nowrap; }
   .run { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; box-shadow: var(--shadow); }
   .run.paused { border-color: var(--alert-line); }
   /* a feature's color: a stripe down the left of its run and of every card that belongs to it */
@@ -287,7 +306,10 @@
 
   @media (max-width: 760px) {
     .top { padding: 16px 16px 10px; }
-    .banner, .human, .runs { margin-left: 16px; margin-right: 16px; }
+    .banner, .human, .runs, .history { margin-left: 16px; margin-right: 16px; }
+    .hist { grid-template-columns: auto minmax(0, 1fr) auto; }
+    .hist .hist-meta { grid-column: 2 / -1; }
+    .hist-hint { display: none; }
     .board { grid-template-columns: minmax(0, 1fr); padding: 0 16px 20px; }
     .col { min-height: 0; min-width: 0; }
     .col:not(:last-child)::after { top: auto; bottom: -11px; right: 50%; transform: rotate(135deg); }
@@ -328,6 +350,13 @@
   <section id="runs" class="runs" hidden aria-label="ADR runs"></section>
 
   <main id="board" class="board" aria-label="Factory board"></main>
+
+  <section id="history" class="history" hidden aria-label="Shipped work">
+    <details id="history-box" open>
+      <summary><span id="history-title">Shipped</span><span class="hist-hint">everything the factory has finished, newest first</span></summary>
+      <div id="history-list" class="history-list"></div>
+    </details>
+  </section>
 
   <footer>
     <span><code>/factory &lt;feature&gt;</code> new job</span>
@@ -536,9 +565,9 @@
   // the id hashes to a slot, and on a clash the later id (alphabetically) takes the next free one.
   const PALETTE = 8;
   let colorSlot = new Map();
-  function assignColors() {
-    const keys = [...new Set([...(board.runs || []).map((r) => r.id),
-      ...(board.jobs || []).filter((j) => !j.run).map((j) => j.id)])].sort();
+  function assignColors(view) {
+    // Work on the board gets distinct colors first; shipped work just keeps its natural one.
+    const keys = [...new Set([...view.runs.map((r) => r.id), ...view.jobs.filter((j) => !j.run).map((j) => j.id)])].sort();
     const taken = new Set();
     colorSlot = new Map();
     for (const k of keys) {
@@ -548,6 +577,41 @@
       taken.add(slot);
       colorSlot.set(k, slot);
     }
+    for (const { item } of view.history) if (!colorSlot.has(item.id)) colorSlot.set(item.id, hash(item.id) % PALETTE);
+  }
+
+  // Finished work leaves the board for the Shipped list: a run once its PR has merged (its unit
+  // cards go with it), and a standalone job once it has merged.
+  function splitBoard() {
+    const runs = board.runs || [], jobs = board.jobs || [];
+    const shippedRuns = new Set(runs.filter((r) => r.stage === 'merged').map((r) => r.id));
+    return {
+      runs: runs.filter((r) => !shippedRuns.has(r.id)),
+      jobs: jobs.filter((j) => (j.run ? !shippedRuns.has(j.run) : j.stage !== 'merged')),
+      history: [
+        ...runs.filter((r) => shippedRuns.has(r.id)).map((item) => ({ kind: 'run', item })),
+        ...jobs.filter((j) => !j.run && j.stage === 'merged').map((item) => ({ kind: 'job', item })),
+      ].sort((a, b) => String(b.item.updated || '').localeCompare(String(a.item.updated || ''))),
+    };
+  }
+  function historyRow({ kind, item }) {
+    const color = colorOf(item.id);
+    const url = item.url && /^https?:\/\//i.test(item.url) ? `<a href="${esc(item.url)}" target="_blank" rel="noopener">${prWord()}</a>` : '';
+    let what = 'job';
+    if (kind === 'run') {
+      const units = item.units || [];
+      const skipped = units.filter((u) => u.status === 'skipped').length;
+      const prior = units.filter((u) => u.prior).length;
+      what = `ADR run · ${units.length - skipped} units${prior ? ` (${prior} done before)` : ''}${skipped ? ` · ${skipped} skipped` : ''}`;
+    }
+    const open = kind === 'run' ? `data-open-run="${esc(item.id)}"` : `data-open-job="${esc(item.id)}"`;
+    return `<div class="hist" style="${color}">
+      <span class="swatch" aria-hidden="true"></span>
+      <button type="button" class="hist-title" ${open} title="${esc(item.title || item.id)}">${esc(item.title || item.id)}</button>
+      <span class="hist-meta">${esc(what)}</span>
+      <span class="hist-meta mono" title="${esc(item.branch || '')}">${esc(item.branch || '')}</span>
+      <span class="hist-when"><span data-ago="${esc(item.updated || '')}">${esc(ago(item.updated))}</span>${url ? ' · ' + url : ''}</span>
+    </div>`;
   }
   const colorOf = (key) => (colorSlot.has(key) ? `--c: var(--id-${colorSlot.get(key) + 1})` : '');
 
@@ -679,9 +743,10 @@
     const firstPos = new Map();
     document.querySelectorAll('[data-job]').forEach((el) => firstPos.set(el.dataset.job, el.getBoundingClientRect()));
 
-    const jobs = Array.isArray(board.jobs) ? board.jobs : [];
+    const view = splitBoard();
+    const jobs = view.jobs;
     computeOverlaps();
-    assignColors();
+    assignColors(view);
     const byCol = Object.fromEntries(STAGES.map((s) => [s.key, []]));
     const human = [];
     for (const j of jobs) {
@@ -692,8 +757,7 @@
 
     // counts
     const running = jobs.filter((j) => ACTIVE.has(j.stage)).length;
-    const merged = jobs.filter((j) => j.stage === 'merged' || j.stage === 'merging').length;
-    $('counts').textContent = `${running} running · ${human.length} need${human.length === 1 ? 's' : ''} you · ${merged} shipped`;
+    $('counts').textContent = `${running} running · ${human.length} need${human.length === 1 ? 's' : ''} you · ${view.history.length} shipped`;
     const name = board.project?.name;
     $('sub').textContent = (name ? name + ' · ' : '') + 'feature → spec → build → 4 reviews → approve → merge';
     document.title = name ? `${name} · Software Factory` : 'Software Factory';
@@ -704,10 +768,14 @@
     $('human-cards').innerHTML = human.map((j) => cardHtml(j, true)).join('');
 
     // ADR runs
-    const runs = (Array.isArray(board.runs) ? board.runs : []).slice()
-      .sort((a, b) => (RUN_ORDER[a.stage] ?? 0) - (RUN_ORDER[b.stage] ?? 0));
+    const runs = view.runs.slice().sort((a, b) => (RUN_ORDER[a.stage] ?? 0) - (RUN_ORDER[b.stage] ?? 0));
     $('runs').hidden = runs.length === 0;
     $('runs').innerHTML = runs.map(runHtml).join('');
+
+    // Shipped: everything that has finished, newest first
+    $('history').hidden = view.history.length === 0;
+    $('history-title').textContent = `Shipped · ${view.history.length}`;
+    $('history-list').innerHTML = view.history.map(historyRow).join('');
 
     // columns
     const quiet = jobs.length === 0 && backlog.length === 0 && runs.length === 0;
@@ -757,8 +825,11 @@
   let lastBacklogFetch = 0;
   const getText = (path) => fetch(path, { cache: 'no-store' }).then((r) => (r.ok ? r.text() : null)).catch(() => null);
   // Every session writes only its own board/<id>.json; merge them all (plus a pre-0.3 board.json).
+  let checkLegacy = true;   // a pre-0.3 board.json is looked for once, and only re-read if it exists
   async function loadState() {
-    const [projectText, listing, legacy] = await Promise.all([getText('project.json'), getText('board/'), getText('board.json')]);
+    const [projectText, listing, legacy] = await Promise.all([getText('project.json'), getText('board/'),
+      checkLegacy ? getText('board.json') : null]);
+    if (legacy == null && (projectText != null || listing != null)) checkLegacy = false;
     if (projectText == null && listing == null && legacy == null) throw new Error('found no project.json, board/ or board.json');
     const names = listing ? [...new Set([...listing.matchAll(/href="([^"/?#]+\.json)"/g)].map((m) => decodeURIComponent(m[1])))].sort() : [];
     const texts = await Promise.all(names.map((n) => getText('board/' + encodeURIComponent(n))));
@@ -911,6 +982,11 @@
     try { localStorage.setItem('factory-theme', root.dataset.theme); } catch { /* storage is optional */ }
   };
   try { const t = localStorage.getItem('factory-theme'); if (t) document.documentElement.dataset.theme = t; } catch { /* storage is optional */ }
+  // remember whether the Shipped list is open or closed
+  try { if (localStorage.getItem('factory-history') === 'closed') $('history-box').open = false; } catch { /* storage is optional */ }
+  $('history-box').addEventListener('toggle', () => {
+    try { localStorage.setItem('factory-history', $('history-box').open ? 'open' : 'closed'); } catch { /* storage is optional */ }
+  });
   setInterval(() => document.querySelectorAll('[data-ago]').forEach((el) => { el.textContent = ago(el.dataset.ago); }), 15000);
 
   // ---------- demo mode: sample jobs and a simulated loop ----------
@@ -925,6 +1001,15 @@
     return {
       project: { name: 'Sample project', host: 'github', merge: 'auto-merge' },
       runs: [{
+        // already shipped: it lives in the Shipped list, not on the board
+        id: '0003-sitemap-freshness', title: 'ADR-0003 Sitemap freshness (sample)', branch: 'feature/0003-sitemap-freshness',
+        stage: 'merged', url: null, updated: at(600), completion: 'complete', files: [],
+        units: [
+          { unit: 'U0', title: 'lastmod field', status: 'done', prior: 'merged in #380' },
+          { unit: 'U1', title: 'Sitemap writer', status: 'done', job: '0003-u1-sitemap-writer' },
+          { unit: 'U2', title: 'Ping search engines', status: 'skipped', reason: 'deferred by the ADR' },
+        ],
+      }, {
         id: '0007-visitor-rate-limits', title: 'ADR-0007 Visitor rate limits (sample)', branch: 'feature/0007-visitor-rate-limits',
         floor: '/work/sample/.claude/worktrees/brave-otter', stage: 'running', reason: null, url: null, updated: at(3),
         files: ['apps/api/src/forms/submit.ts', 'apps/api/src/limits/', 'apps/web/src/consent/config.ts', 'docs/runbooks/rate-limits.md'],
@@ -951,6 +1036,7 @@
         unitJob('0007-visitor-rate-limits', 'U1', 'submit-limiter', 'Limiter on the submit endpoint', { stage: 'review', round: 1,
           reviews: { security: 'pending', ux: 'PASS', ui: 'PASS', code: 'pending' } }),
         unitJob('0009-consent-banner-v2', 'U1', 'banner-categories', 'Banner categories', { stage: 'build' }),
+        unitJob('0003-sitemap-freshness', 'U1', 'sitemap-writer', 'Sitemap writer', { stage: 'done', round: 1, reviews: all('PASS'), decision: 'APPROVE', updated: at(610) }),
         job('001', 'sitemap-lastmod', 'Add lastmod to tenant sitemaps', { stage: 'merged', round: 1, reviews: all('PASS'), decision: 'APPROVE', updated: at(140) }),
         job('002', 'preview-link-copy', 'Copy button for page preview links', { stage: 'needs-human', round: 2, decision: null,
           reviews: { security: 'PASS', ux: 'CHANGES', ui: 'PASS', code: 'PASS' },
@@ -975,6 +1061,8 @@
   // A run starts its next queued unit once the last one is accepted, and pushes after the final one.
   function demoRuns(now) {
     for (const run of board.runs || []) {
+      // a pushed run's PR merges a few beats later, and the run moves to Shipped
+      if (run.stage === 'pushed') { run.waited = (run.waited || 0) + 1; if (run.waited > 3) { run.stage = 'merged'; run.updated = now; } continue; }
       if (run.stage !== 'running') continue;
       const statuses = run.units.map(unitStatus);
       if (statuses.includes('active') || statuses.includes('paused')) continue;
@@ -996,7 +1084,7 @@
     const now = new Date().toISOString();
     demoRuns(now);
     const active = jobs.filter((j) => ACTIVE.has(j.stage) || j.stage === 'merging');
-    const runsBusy = (board.runs || []).some((r) => r.stage === 'running');
+    const runsBusy = (board.runs || []).some((r) => r.stage === 'running' || r.stage === 'pushed');
     if (!active.length && !demoQueue.length && !runsBusy) {
       // Hold the finished board for a few beats, so the pushed run is seen, then start over.
       if (++demoIdle < 4) { render(); return; }
