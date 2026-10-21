@@ -130,9 +130,10 @@ run side by side:
 - **One floor each.** Every session builds in its own worktree. A session's floor holds one
   job or run at a time, and two sessions can never claim the same run or job id.
 - **One dashboard.** Each session writes only its own `board/<id>.json`, and the dashboard
-  merges them all, showing which floor each run is on. Every run, and every job that isn't
-  part of one, gets its own color: a stripe down its run and down each of its cards, whose
-  tag also names the ADR (`0062 · U18`). Serve it once; every session's work appears there.
+  merges them all, showing which floor each run is on. Every ADR run gets its own color: a
+  stripe down its run strip and down each of its cards, whose tag also names the ADR
+  (`0062 · U18`). One-off jobs have no strip to match, so they stay uncolored and carry a
+  `one-off` tag. Serve it once; every session's work appears there.
   When a run's PR merges (or a job's), its strip and cards leave the board for the **Shipped**
   list at the bottom: a permanent record of everything the factory has finished, with its
   units, branch, PR and plan.

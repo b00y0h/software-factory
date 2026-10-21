@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="factory-dashboard-version" content="7">
+<meta name="factory-dashboard-version" content="8">
 <title>Software Factory</title>
 <!--
   The factory's dashboard. The master copy lives in the software-factory plugin
@@ -26,9 +26,9 @@
     --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .08);
     --shadow-lift: 0 6px 16px rgba(16, 24, 40, .12);
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    /* one color per feature (a run, or a job on its own), so its cards are easy to follow */
+    /* one color per ADR run, so its strip and its cards are easy to match */
     --id-1: #7c3aed; --id-2: #0f766e; --id-3: #be185d; --id-4: #0369a1;
-    --id-5: #4d7c0f; --id-6: #a16207; --id-7: #475569; --id-8: #9f1239;
+    --id-5: #4d7c0f; --id-6: #a16207; --id-7: #4338ca; --id-8: #9f1239;
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
@@ -42,7 +42,7 @@
       --opus: #b7a2ff; --opus-bg: rgba(183, 162, 255, .14); --sonnet: #62d3dc; --sonnet-bg: rgba(98, 211, 220, .13);
       --shadow: 0 1px 2px rgba(0, 0, 0, .4); --shadow-lift: 0 8px 22px rgba(0, 0, 0, .5);
       --id-1: #a78bfa; --id-2: #2dd4bf; --id-3: #f472b6; --id-4: #38bdf8;
-      --id-5: #a3e635; --id-6: #facc15; --id-7: #94a3b8; --id-8: #fb7185;
+      --id-5: #a3e635; --id-6: #facc15; --id-7: #818cf8; --id-8: #fb7185;
       color-scheme: dark;
     }
   }
@@ -56,7 +56,7 @@
     --opus: #b7a2ff; --opus-bg: rgba(183, 162, 255, .14); --sonnet: #62d3dc; --sonnet-bg: rgba(98, 211, 220, .13);
     --shadow: 0 1px 2px rgba(0, 0, 0, .4); --shadow-lift: 0 8px 22px rgba(0, 0, 0, .5);
     --id-1: #a78bfa; --id-2: #2dd4bf; --id-3: #f472b6; --id-4: #38bdf8;
-    --id-5: #a3e635; --id-6: #facc15; --id-7: #94a3b8; --id-8: #fb7185;
+    --id-5: #a3e635; --id-6: #facc15; --id-7: #818cf8; --id-8: #fb7185;
     color-scheme: dark;
   }
 
@@ -135,8 +135,9 @@
   .run.tagged { box-shadow: inset 5px 0 0 var(--c), var(--shadow); padding-left: 19px; }
   .card.tagged { box-shadow: inset 4px 0 0 var(--c), var(--shadow); padding-left: 16px; }
   .card.tagged:hover { box-shadow: inset 4px 0 0 var(--c), var(--shadow-lift); }
-  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: var(--c); margin-right: 7px; vertical-align: 0; flex: none; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: var(--c, var(--faint)); margin-right: 7px; vertical-align: 0; flex: none; }
   .unit-tag.tagged { color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
+  .unit-tag.solo { color: var(--muted); background: var(--surface-2); font-family: inherit; }
   .run-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   .run-title { all: unset; cursor: pointer; display: block; margin-top: 2px; font-weight: 650; font-size: 14px; }
   .run-title:hover { text-decoration: underline; }
@@ -561,13 +562,14 @@
       }).join('') + '</div>';
   }
 
-  // Each feature (a run, or a job that isn't part of one) gets its own color, and it stays put:
-  // the id hashes to a slot, and on a clash the later id (alphabetically) takes the next free one.
+  // Each ADR run gets its own color, shared by its strip and every one of its cards, and it stays
+  // put: the id hashes to a slot, and on a clash the later id (alphabetically) takes the next free
+  // one. One-off jobs get no color, since they have no strip to match; they carry a "one-off" tag.
   const PALETTE = 8;
   let colorSlot = new Map();
   function assignColors(view) {
-    // Work on the board gets distinct colors first; shipped work just keeps its natural one.
-    const keys = [...new Set([...view.runs.map((r) => r.id), ...view.jobs.filter((j) => !j.run).map((j) => j.id)])].sort();
+    // Runs on the board get distinct colors first; shipped runs just keep their natural one.
+    const keys = [...new Set(view.runs.map((r) => r.id))].sort();
     const taken = new Set();
     colorSlot = new Map();
     for (const k of keys) {
@@ -577,7 +579,7 @@
       taken.add(slot);
       colorSlot.set(k, slot);
     }
-    for (const { item } of view.history) if (!colorSlot.has(item.id)) colorSlot.set(item.id, hash(item.id) % PALETTE);
+    for (const { kind, item } of view.history) if (kind === 'run' && !colorSlot.has(item.id)) colorSlot.set(item.id, hash(item.id) % PALETTE);
   }
 
   // Finished work leaves the board for the Shipped list: a run once its PR has merged (its unit
@@ -637,7 +639,7 @@
         `</div>`;
     }
     return `<article class="card${color ? ' tagged' : ''}" style="${color}" tabindex="0" role="button" data-job="${esc(job.id)}" aria-label="${esc((job.title || job.id) + ', ' + stateLine(job))}">
-      <div class="card-top"><span class="card-id">${job.unit ? `<span class="unit-tag${color ? ' tagged' : ''}" title="${esc('unit of ' + (job.run || 'a run'))}">${esc(adr ? adr + ' · ' + job.unit : job.unit)}</span>` : ''}<span class="job-id">${esc(job.id)}</span></span>${working ? '<span class="working" title="an agent is working"></span>' : badge}</div>
+      <div class="card-top"><span class="card-id">${job.unit ? `<span class="unit-tag${color ? ' tagged' : ''}" title="${esc('unit of ' + (job.run || 'a run'))}">${esc(adr ? adr + ' · ' + job.unit : job.unit)}</span>` : (job.run ? '' : '<span class="unit-tag solo" title="a one-off job, not part of an ADR">one-off</span>')}<span class="job-id">${esc(job.id)}</span></span>${working ? '<span class="working" title="an agent is working"></span>' : badge}</div>
       <div class="card-title">${esc(job.title || job.id)}</div>
       <div class="state${job.stage === 'needs-human' ? ' alert' : ''}">${esc(stateLine(job))}</div>
       ${rounds.length ? `<div class="rounds">${rounds.map((r) => chipsRow(job, r)).join('')}</div>` : ''}
