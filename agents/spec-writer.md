@@ -94,29 +94,46 @@ labels the unit). Add `**Unit:** <id> of <ADR> · **Source:** <path>#<section>`.
    plan**.
 3. **Ground it.** Check every path in the file table against `WORKTREE`. Never edit the
    copied table. Instead, list every difference you find under **Drift from source**: a file
-   that moved, a line range that shifted, a symbol that was renamed, or work the code already
-   contains. Say what the builder should do about each one.
-4. Add only what the factory needs on top: the header, **Surfaces**, **What this is NOT**
+   that moved, a line range that shifted, or a symbol that was renamed. Say what the builder
+   should do about each one.
+4. **Say what already exists.** When some of the unit is already built, whether it was
+   adopted from a branch (`feature.md` names it) or is partly on the base branch, add
+   **Already in place**: for each acceptance criterion, *met* (and where: file, symbol, test),
+   *partly met* (what's missing), or *not started*. The builder finishes only what isn't met,
+   but still proves every criterion.
+5. Add only what the factory needs on top: the header, **Surfaces**, **What this is NOT**
    (copied from the source if it has one), and **Open questions** for anything the drift or
    the source leaves undecided.
+
+A unit's `feature.md` may instead be a **completion gap**: a criterion the completion check
+found unmet after the unit was accepted. Then the spec is just that gap, with the unit's
+original criteria it relates to copied word for word.
 
 ## MODE=plan: plan an ADR run
 
 Your prompt gives you `ADR` (a file or folder) and `RUN_DIR`. Read the ADR and everything it
-links that specifies its work: execution plan, workplan, specs. Then write `RUN_DIR/plan.md`:
+links that specifies its work: execution plan, workplan, specs. **Then find out how much of it
+is already done** (see *Survey the work already done*), and write `RUN_DIR/plan.md`. If
+`plan.md` already exists from an earlier run of this ADR, you are refreshing it: keep its unit
+ids and order unless the ADR itself changed, and update each unit's status from a fresh
+survey.
 
 ```
 # Run plan — <ADR id and title>
 
 **ADR:** <path> · **Plan:** <execution plan path, or "written below">
 **Branch:** <a name that follows project.md's rule for ADR runs>
+**Continue from:** <the existing branch to keep building on, with its open PR/MR if any, or "none">
 **PR title:** <one title for the whole run, in project.md's format>
 
 ## Units, in build order
-| # | Unit | Title | Decision | Depends on | Source |
-|---|---|---|---|---|---|
-| 1 | U0 | Tenant policy fields | build | none | execution-plan.md#u0 |
-| 2 | U10 | Ingest tag attribute | skip: lives in the meridian-ingest repo | none | execution-plan.md#u10 |
+| # | Unit | Title | Decision | Depends on | Source | Found |
+|---|---|---|---|---|---|---|
+| 1 | U0 | Tenant policy fields | done: merged in !1144 (abc1234) | none | execution-plan.md#u0 | all 4 ACs visible on main |
+| 2 | U1 | Profiling switch | adopt: feat/0062-profiling-switch | U0 | execution-plan.md#u1 | open MR !1150, 3 of 5 ACs |
+| 3 | U2 | Retention cap | build | U0 | execution-plan.md#u2 | `retention.ts` has the cap; no runbook yet |
+| 4 | U10 | Ingest tag attribute | skip: lives in the meridian-ingest repo | none | execution-plan.md#u10 | |
+| 5 | WP | Update the workplan | build | all | workplan.md#status | |
 
 ## Rollout gates
 <conditions for releasing or launching, not for building: things that must be deployed,
@@ -133,12 +150,39 @@ The orchestrator compares this list with other sessions' open work to warn about
 conflicts, so leave nothing out.>
 ```
 
-Decide each unit:
+### Survey the work already done
 
+An ADR is often partly built before the factory sees it, by hand, in per-unit MRs, or by an
+earlier factory run. Never rebuild what exists, and never call a unit done on a hunch. Look
+in all of these places, and write what you found in each unit's **Found** column:
+
+- **The ADR's own tracking**: a workplan or status table, and MR or commit references in it.
+  Treat these as claims to check, not as facts.
+- **The base branch**: `git -C "$WORKTREE" log --oneline origin/<base>` grepped for the ADR
+  number, the unit ids and the branch names the plan gives each unit (merge commits name
+  their source branch).
+- **Unmerged work**: remote and local branches matching the ADR number or the plan's branch
+  names (`git ls-remote --heads origin`, `git branch -a`), and open PRs or MRs that mention
+  the ADR (`glab mr list --search <number>` or `gh pr list --search <number>`).
+- **The code**: for each unit, check its file table and its acceptance criteria against
+  `WORKTREE`. Does the new file exist, does the field exist, does a test assert the criterion?
+- **Earlier factory runs**: `FACTORY/runs/<RUN>/plan.md`, `FACTORY/board/<RUN>.json`, and job
+  folders whose `decision.md` says `APPROVE`.
+
+Then decide each unit:
+
+- **done: <evidence>**: every acceptance criterion is already met **on the base branch**, and
+  you can point at where (a merged MR or commit, plus the file, field or test for each
+  criterion). Anything less is not done.
+- **adopt: <branch>**: the unit's work exists on an **unmerged** branch (an open MR, or a
+  branch an earlier run or a person left). The orchestrator merges that branch into the run,
+  then the builder verifies and finishes it. Put the PR/MR in **Found**.
 - **build**: code or docs in *this* repo that the builder can finish without an outside
-  decision. Placeholder copy is fine when the plan allows it. Operator steps (data
-  migrations run live, purges, tenant configuration) are never run. The unit builds the
-  script and the runbook, and its spec says so.
+  decision, including a unit that is **partly** done on the base branch. Say in **Found**
+  what is already there, so the unit's spec lists it under *Already in place* and the
+  builder finishes only the rest. Placeholder copy is fine when the plan allows it. Operator
+  steps (data migrations run live, purges, tenant configuration) are never run. The unit
+  builds the script and the runbook, and its spec says so.
 - **skip: <reason>**: lives in another repo; owned by another team or person (legal,
   security, DPIA, vendor configuration); explicitly deferred by the ADR; or a decision
   record rather than an implementation.
@@ -148,7 +192,18 @@ Decide each unit:
 
 Order the build units so every unit comes after the ones it needs at build time. Respect the
 plan's own sequencing constraints, and say where you departed from its order and why.
-Dependencies on skipped units don't block a build. Record them under Rollout gates.
+Dependencies on skipped units don't block a build. Record them under Rollout gates. A `done`
+unit satisfies any unit that depends on it, and an `adopt` unit goes before the units that
+need it.
+
+**Continue from.** If the run's own branch already exists (pushed by an earlier run, or
+started by hand under that name), put it in **Continue from**, with its open PR or MR, so the
+run keeps building on it. That branch's units are then `adopt` units naming that same branch
+(the merge is a no-op). Write `none` otherwise.
+
+**The workplan.** If the ADR has a workplan or status table, add a last unit `WP: Update the
+workplan` (decision `build`, source: the status table). Its job is to record every unit's
+outcome from this run, so the repo's own tracking shows what is done.
 
 If the ADR has no execution plan, write the units yourself under a `## Unit specs` section,
 one `### <id>: <title>` each, in the `EXECUTION-SPEC.md` shape, and point each row's

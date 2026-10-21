@@ -25,9 +25,11 @@ first.
 The factory works in two ways:
 
 - **A job** (`/factory <feature>`): one feature, one branch, one PR, merged per the merge mode.
-- **An ADR run** (`/factory adr <ADR>`): every buildable unit of an ADR, in build order, each
-  one a job on the **same** branch. When the last unit is accepted, the branch is pushed
-  once and a PR opens for preview and human review. A run never auto-merges.
+- **An ADR run** (`/factory adr <ADR>`): every unit of an ADR that isn't done yet, in build
+  order, each one a job on the **same** branch. Work that already exists (merged, on an open
+  branch, or partly built) is found and kept. A completion check confirms the whole ADR is
+  done, then the branch is pushed once and a PR opens (or is updated) for preview and human
+  review. A run never auto-merges.
 
 ## The loop (edit this to change the factory)
 
@@ -190,7 +192,7 @@ Parse `$ARGUMENTS`:
 | Input | Do |
 |---|---|
 | `init` | Run **Setup**, even if `PROFILE` already exists (it is replaced). |
-| `adr <ADR>` | Start an **ADR run**. `<ADR>` is a path to the ADR file or its folder, or just its number (find `docs/**/<number>*`). |
+| `adr <ADR>` | Run an **ADR** to completion. `<ADR>` is a path to the ADR file or its folder, or just its number (find `docs/**/<number>*`). Work already done on the ADR is found and kept, and an existing run of it is picked up. |
 | `continue [run] [answer]` | Resume a run (see **Continuing a run**). If the first word is the id of an open run, it picks the run; the rest is the answer. |
 | `next` | Claim the first `- [ ]` line in `FACTORY/backlog.md` that no other session has claimed (`mkdir FACTORY/claims/<first 12 hex of the line's sha1>` succeeds), tick it (`- [x] <text> → <JOB>`), and run it as a new job. If none is left, say so and stop. |
 | `approve <job-id>` | The job must be in `needs-human` on **your** floor (enter its floor first if this session isn't on it; see **Continuing a run**). For a job, go to **Merge**. For a run unit, accept it (step 6 of the run) and continue the run. |
@@ -312,28 +314,56 @@ why everything lives in files.
 
 ## Running an ADR
 
-`/factory adr <ADR>` works through every buildable unit of the ADR, in order, on one branch.
+`/factory adr <ADR>` works through every unit of the ADR that isn't finished yet, in order, on
+one branch, and finishes with the whole ADR complete. An ADR is often partly built already
+(by hand, in per-unit MRs, or by an earlier run), so the run starts by finding out what is
+done, and builds only the rest.
+
+If `FACTORY/runs/<RUN>` already exists, this ADR has a run. Don't start another one: pick
+that run up (see **Continuing a run**), which refreshes its plan first.
 
 1. **Start the run.** Resolve the ADR path and `RUN`, and claim it (`mkdir FACTORY/runs/<RUN>`).
    Settle your floor and put it on a fresh base with no branch, as in step 1 of a job. Write
    `BOARD` with the run at stage `planning`, no units yet, and `floor` set to `WORKTREE`.
-2. **Plan.** Spawn `spec-writer` with `MODE=plan`, `ADR` and `RUN_DIR`. It writes
-   `RUN_DIR/plan.md`: every unit in build order, each one marked `build`, `skip:` or `ask:`,
-   and the *Files this run touches*. Set the run's `files` from that list, then check
-   overlaps.
-3. **Name the branch.** Read `**Branch:**` from `plan.md`, check it as in step 3 of a job
-   (it must follow `PROFILE`'s rule for ADR runs), then `git -C <WORKTREE> switch -c <name>`.
-   Fill in the run's `branch` and its units in plan order (see **Board files**), and set
-   stage `running`.
+2. **Plan, starting with what's already done.** Spawn `spec-writer` with `MODE=plan`, `ADR`
+   and `RUN_DIR`. It surveys the base branch, open branches and MRs, the code, the ADR's own
+   status table and earlier runs, then writes `RUN_DIR/plan.md`: every unit in build order,
+   each marked `done:` (with evidence), `adopt:` (with a branch), `build`, `skip:` or `ask:`,
+   plus a **Continue from** line and the *Files this run touches*. Set the run's `files` from
+   that list, then check overlaps. Tell the user in one line what was already done.
+3. **Name or continue the branch.** Read `**Branch:**` and `**Continue from:**` from
+   `plan.md`.
+   - **Continue from `none`**: check the name as in step 3 of a job (it must follow
+     `PROFILE`'s rule for ADR runs), then `git -C <WORKTREE> switch -c <name>`.
+   - **Continue from an existing branch** (it must be the same name): build on it. Fetch it
+     and `git -C <WORKTREE> switch <name>` (or `switch -c <name> origin/<name>`). If it is
+     behind `BASE_REF`, bring it up to date with `git -C <WORKTREE> merge --no-ff <BASE_REF>`.
+     Never rebase. On a conflict, `git merge --abort`, set the run `paused` with the reason,
+     and stop. Record its open PR or MR, if any, as the run's `url`, so the end of the run
+     updates it instead of opening another.
+
+   Fill in the run's `branch`, `continuedFrom`, and its units in plan order (see
+   **Board files**), and set stage `running`.
 4. **For each unit in plan order:**
+   - `done:` units are marked `done` with `prior` set to the evidence. They get no job.
    - `skip:` units are marked `skipped` and never built.
    - `ask:` units stop the run: set the run `paused`, its `reason` to the question, and tell
      the user to answer with `/factory continue <RUN> <answer>`.
+   - `adopt: <branch>` units: first bring that work in with
+     `git -C <WORKTREE> fetch origin <branch>` and
+     `git -C <WORKTREE> merge --no-ff origin/<branch> -m "Merge <branch> (adopting <unit>)"`.
+     A branch that is already in the run's history needs no merge. On a conflict, abort the
+     merge, set the run `paused` with the reason, and stop. Then treat the unit like a
+     `build` unit, with `DIFF_BASE` set to the commit **before** the merge, so the reviewers
+     see the adopted work. Add to `feature.md`: *"Code for this unit came from <branch>
+     (<PR/MR>). Verify it, finish it, and prove every criterion."* Set the unit's `adopted`
+     to the branch.
    - `build` units become a job. Create `JOB_DIR`, then write `feature.md` as
      *"Unit <id> of <ADR>: <title>. Source: <source>. Adopt it; don't rewrite it."*, plus
-     any answer the user gave. Set the job's `run`, `unit` and `branch`, and record
-     `startSha = git -C <WORKTREE> rev-parse HEAD` as its `DIFF_BASE`. Mark the unit
-     `active`.
+     the plan's **Found** note for the unit and any answer the user gave. Set the job's `run`,
+     `unit` and `branch`, and record `startSha = git -C <WORKTREE> rev-parse HEAD` as its
+     `DIFF_BASE`. Mark the unit `active`.
+   - The `WP` unit (update the workplan) waits until after the completion check (step 7).
 5. **Run the job loop** for that unit: spec (`MODE=unit`), then build, review and approve
    (`MODE=adr`). Units run one at a time on your floor, each on top of the last.
 6. **Accept the unit** on `APPROVE` (or `/factory approve`). `git -C <WORKTREE> rev-parse
@@ -341,19 +371,40 @@ why everything lives in files.
    as the reviewed commit). Set the job's stage `done` and the unit `done`. Add the unit's
    changed paths to the run's `files`, check overlaps again, and go on to the next unit.
    Never start a unit on top of an unreviewed commit.
-7. **When every `build` unit is done, push and open the preview PR:**
-   - `git -C <WORKTREE> log --oneline <BASE_REF>..HEAD` must contain only the run's units.
+7. **Check that the ADR is complete.** When every other unit is `done` or `skipped`, set the
+   run's `completion` to `checking` and spawn `approver` with `MODE=complete` and `RUN_DIR`.
+   It checks every acceptance criterion of every unit, including the ones that were done
+   before the run, on the current `HEAD`, and writes `RUN_DIR/completion.md`.
+   - `COMPLETE`: set `completion: complete` and go on.
+   - `GAPS`, the first time: for each gap line, run a fix job for that unit
+     (`JOB` = `<adr>-<unit>-fix-<n>`, `feature.md` = the gap line), through the job loop.
+     Then check again.
+   - `GAPS` again: set `completion: gaps`, pause the run with the gaps as the `reason`, and
+     tell the user. `/factory continue <RUN> push anyway` pushes with the gaps listed in the
+     PR body. `/factory rework <job-id> <note>` fixes a unit, and then the check runs again.
+8. **Update the workplan.** If the plan has a `WP` unit, run it now as a job. Its
+   `feature.md` lists every unit's outcome from this run: done before the run (with
+   evidence), adopted (with branch and PR/MR), built (with job id), fixed after the
+   completion check, or skipped (with the reason).
+9. **Push, and open or update the preview PR:**
+   - `git -C <WORKTREE> log --oneline <BASE_REF>..HEAD` must contain only this ADR's work:
+     the run's units, plus any adopted or continued branch.
    - Push exactly HEAD, and no tags:
      `git -C <WORKTREE> push --no-follow-tags -u origin HEAD:refs/heads/<BRANCH>`.
-     If the output shows `[new tag]`, stop and tell the user.
-   - Open the PR or MR **without auto-merge**, as a draft if `PROFILE` says so for ADR runs:
+     If the output shows `[new tag]`, stop and tell the user. Pushing a continued branch
+     must be a fast-forward. If it isn't, someone pushed to it meanwhile: pause the run and
+     say so. Never force-push.
+   - If the run already has an open PR or MR (`url`), update its description
+     (`glab mr update <url> --description "<body>"`, or `gh pr edit <url> --body "<body>"`).
+     Otherwise open one **without auto-merge**, as a draft if `PROFILE` says so for ADR runs:
      `glab mr create --source-branch <BRANCH> --target-branch <BASE> --title "<title>"
      --description "<body>" [--draft] --yes`, or `gh pr create --base <BASE> --head <BRANCH>
      --title "<title>" --body "<body>" [--draft]`.
    - The title is `plan.md`'s `**PR title:**`. The body contains:
      - a link to the ADR;
-     - a table of every unit with its outcome (done, with its job id; or skipped, with the
-       reason);
+     - a table of every unit with its outcome (done before this run, with its evidence;
+       adopted, with the branch; built, with its job id; or skipped, with the reason);
+     - the completion check's result, including any gaps you were told to push anyway;
      - every approver's **Flags for the PR reviewer**;
      - the plan's **Rollout gates**;
      - any overlaps with other open runs or jobs, and their files;
@@ -361,7 +412,8 @@ why everything lives in files.
 
      Add no AI attribution lines.
    - Set the run `pushed` with its `url`, and tell the user the PR link and where the preview
-     will appear.
+     will appear. Any MR an adopted unit came from will show as merged once this one merges,
+     because its commits are included. Say so, so nobody merges it separately.
 
 **After the push**, `/factory rework <job-id> <note>` still works on a run unit: the builder
 commits on top of the branch, the unit is reviewed again from that commit, and when it is
@@ -379,7 +431,13 @@ its session ended or was compacted mid-run.
 - **Which floor.** A run continues on the floor recorded in its board file. If this session
   isn't on it, enter it with `EnterWorktree`, but only after the user confirms that the
   session that started the run has ended. Two sessions must never drive one run. You now own
-  that board file.
+  that board file. If that floor no longer exists, use this session's floor, and continue on
+  the run's branch as in step 3 of the run.
+- **Refresh the plan first.** Work may have landed since the run last moved: units merged by
+  hand, MRs opened. Spawn `spec-writer` with `MODE=plan` again. It keeps the unit ids and
+  order and updates their statuses. Mark any unit that is now `done:` as done (with `prior`),
+  and pick up any new `adopt:` when you reach that unit. Units this run already accepted
+  stay `done`.
 - Paused on an `ask:` unit: append the answer to that unit's job `feature.md` (create the job
   as in step 4 if it doesn't exist yet) and build it.
 - Paused on a `needs-human` job: say so, and point at `/factory approve` or
@@ -461,10 +519,12 @@ job, with an empty `runs`.
       "overlaps": [
         { "with": "0070-partner-insights", "title": "ADR-0070 Partner insights", "files": ["apps/site-core/src/lib/consentConfig.ts"] }
       ],
+      "continuedFrom": null,
+      "completion": null,
       "units": [
-        { "unit": "U0", "title": "Tenant policy fields", "status": "done", "job": "0062-u0-tenant-policy" },
+        { "unit": "U0", "title": "Tenant policy fields", "status": "done", "prior": "merged in !1144 (abc1234)" },
         { "unit": "U10", "title": "Ingest tag attribute", "status": "skipped", "reason": "lives in the meridian-ingest repo" },
-        { "unit": "U1", "title": "Profiling switch", "status": "active", "job": "0062-u1-profiling-switch" },
+        { "unit": "U1", "title": "Profiling switch", "status": "active", "job": "0062-u1-profiling-switch", "adopted": "feat/0062-profiling-switch" },
         { "unit": "U2", "title": "Retention cap", "status": "queued" }
       ],
       "updated": "2026-10-20T14:40:00Z"
@@ -502,7 +562,11 @@ job, with an empty `runs`.
   `merged`, or `done` (a run unit accepted onto the run's branch). A job outside a run has no
   `run` or `unit`, and keeps its own `files` and `overlaps`.
 - Run `stage` is one of `planning`, `running`, `paused`, `pushed`, `merged`. A unit's `status`
-  is one of `queued`, `active`, `done`, `skipped`, `ask`.
+  is one of `queued`, `active`, `done`, `skipped`, `ask`. A unit that was done before the run
+  has `prior` (the evidence) and no job. A unit whose code came from another branch has
+  `adopted` (that branch).
+- A run's `continuedFrom` is the existing branch it picked up (or `null`), and its
+  `completion` is `null`, `checking`, `complete` or `gaps`.
 - A floor is busy while any board file with that `floor` holds a job between `spec` and
   `approval` or `needs-human`, or a run that is `planning`, `running` or `paused`.
 - `reviews` is the current round, and `history` holds the finished ones. Use `decision` for

@@ -16,6 +16,19 @@ committed on this branch. Build on them; don't redo or restyle them. Change an e
 unit's code only where your spec requires it, and say so in `build.md`. Your work is
 everything from `DIFF_BASE` to `HEAD`, and that is all the reviewers will see.
 
+**When some of your unit already exists**, because it was adopted from another branch (now
+merged into this one) or because the spec's **Already in place** says part of it is on the
+base branch, finish it rather than rewrite it:
+- Verify each criterion the spec calls *met* against the real code, and test it. Don't take
+  the spec's word for it.
+- Build only what is *partly met* or *not started*. Keep the existing code's shape unless a
+  criterion forces a change, and say why when it does.
+- Add a test wherever a criterion has none.
+- `build.md`'s evidence table still covers **every** criterion, marking which were already
+  in place.
+
+If `feature.md` is a **completion gap**, fix exactly that gap and prove it.
+
 ## Read first
 
 - `WORKTREE/factory/project.md`: this repo's setup, test commands and rules. Where it is more

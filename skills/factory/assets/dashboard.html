@@ -118,9 +118,12 @@
   .unit.u-active { color: var(--accent); background: var(--accent-bg); border-color: var(--accent); }
   .unit.u-paused, .unit.u-ask { color: var(--alert); background: var(--alert-bg); border-color: var(--alert-line); }
   .unit.u-queued { border-style: dashed; }
+  .unit.u-prior { background: transparent; border-style: dashed; }
+  .unit.adopted { box-shadow: inset 0 -2px 0 var(--accent); }
   .unit.u-skipped { text-decoration: line-through; opacity: .55; border-style: dotted; }
   .run-foot { margin-top: 8px; font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
   .run-foot .alert { color: var(--alert); font-weight: 600; }
+  .run-foot .done { color: var(--pass); font-weight: 600; }
   .run .cmds { margin-top: 8px; }
   .overlap { margin-top: 8px; font-size: 12px; color: var(--changes); }
   .overlap summary { cursor: pointer; font-weight: 600; list-style: none; }
@@ -547,6 +550,7 @@
 
   // A unit's status follows its job once it has one, so chips move with the cards.
   function unitStatus(u) {
+    if (u.prior) return 'done';
     const j = u.job && (board.jobs || []).find((x) => x.id === u.job);
     if (j) {
       if (['done', 'merging', 'merged'].includes(j.stage)) return 'done';
@@ -606,11 +610,16 @@
     const badge = stage === 'paused' ? 'alert' : stage === 'pushed' || stage === 'merged' ? 'pass' : 'accent';
     const chips = units.map((u, i) => {
       const s = statuses[i];
-      const tip = `${u.unit}${u.title ? ': ' + u.title : ''} · ${s}${u.reason ? ' · ' + u.reason : ''}`;
+      const how = u.prior ? ' · done before this run: ' + u.prior : u.adopted ? ' · adopted from ' + u.adopted : '';
+      const tip = `${u.unit}${u.title ? ': ' + u.title : ''} · ${s}${how}${u.reason ? ' · ' + u.reason : ''}`;
+      const cls = `unit u-${s}${u.prior ? ' u-prior' : ''}${u.adopted ? ' adopted' : ''}`;
       return u.job
-        ? `<button type="button" class="unit u-${s}" data-open-job="${esc(u.job)}" title="${esc(tip)}" aria-label="${esc(tip)}">${esc(u.unit)}</button>`
-        : `<span class="unit u-${s}" title="${esc(tip)}" aria-label="${esc(tip)}">${esc(u.unit)}</span>`;
+        ? `<button type="button" class="${cls}" data-open-job="${esc(u.job)}" title="${esc(tip)}" aria-label="${esc(tip)}">${esc(u.unit)}</button>`
+        : `<span class="${cls}" title="${esc(tip)}" aria-label="${esc(tip)}">${esc(u.unit)}</span>`;
     }).join('');
+    const prior = units.filter((u) => u.prior).length;
+    const completion = { checking: '<span>checking the ADR is complete…</span>', complete: '<span class="done">✓ ADR complete</span>',
+      gaps: '<span class="alert">completion check found gaps</span>' }[run.completion] || '';
     const url = run.url && /^https?:\/\//i.test(run.url) ? `<a href="${esc(run.url)}" target="_blank" rel="noopener">${prWord()}</a>` : '';
     const ask = stage === 'paused' && statuses.includes('ask');
     const cmd = `/factory continue ${run.id} "<answer>"`;
@@ -624,7 +633,7 @@
       </div>
       <div class="progress" aria-hidden="true"><i style="width:${pct}%"></i></div>
       <div class="units">${chips}</div>
-      <div class="run-foot"><span>${done} of ${buildable} units done${skipped ? ` · ${skipped} skipped` : ''}</span>${run.floor ? `<span title="${esc(run.floor)}">floor: ${esc(floorName(run.floor))}</span>` : ''}${run.reason ? `<span class="alert">${esc(run.reason)}</span>` : ''}${url}</div>
+      <div class="run-foot"><span>${done} of ${buildable} units done${prior ? ` (${prior} before this run)` : ''}${skipped ? ` · ${skipped} skipped` : ''}</span>${run.continuedFrom ? `<span>continuing ${esc(run.continuedFrom)}</span>` : ''}${run.floor ? `<span title="${esc(run.floor)}">floor: ${esc(floorName(run.floor))}</span>` : ''}${completion}${run.reason ? `<span class="alert">${esc(run.reason)}</span>` : ''}${url}</div>
       ${overlapHtml(run.id)}
       ${ask ? `<div class="cmds"><div class="cmd"><span>${esc(cmd)}</span><button class="copy" type="button" data-copy="${esc(cmd)}">Copy</button></div></div>` : ''}
     </article>`;
@@ -893,16 +902,18 @@
         id: '0009-consent-banner-v2', title: 'ADR-0009 Consent banner v2 (sample)', branch: 'feature/0009-consent-banner-v2',
         floor: '/work/sample/.claude/worktrees/quiet-heron', stage: 'running', reason: null, url: null, updated: at(2),
         files: ['apps/web/src/consent/config.ts', 'apps/web/src/consent/Banner.tsx'],
+        continuedFrom: 'feature/0009-consent-banner-v2', completion: null,
         units: [
-          { unit: 'U0', title: 'Banner categories', status: 'active', job: '0009-u0-banner-categories' },
-          { unit: 'U1', title: 'Consent mode signals', status: 'queued' },
+          { unit: 'U0', title: 'Consent categories', status: 'done', prior: 'merged in #405 (3f2a9c1)' },
+          { unit: 'U1', title: 'Banner categories', status: 'active', job: '0009-u1-banner-categories', adopted: 'feature/banner-categories' },
+          { unit: 'U2', title: 'Consent mode signals', status: 'queued' },
         ],
       }],
       jobs: [
         unitJob('0007-visitor-rate-limits', 'U0', 'policy-fields', 'Policy fields and resolvers', { stage: 'done', round: 1, reviews: all('PASS'), decision: 'APPROVE', updated: at(12) }),
         unitJob('0007-visitor-rate-limits', 'U1', 'submit-limiter', 'Limiter on the submit endpoint', { stage: 'review', round: 1,
           reviews: { security: 'pending', ux: 'PASS', ui: 'PASS', code: 'pending' } }),
-        unitJob('0009-consent-banner-v2', 'U0', 'banner-categories', 'Banner categories', { stage: 'build' }),
+        unitJob('0009-consent-banner-v2', 'U1', 'banner-categories', 'Banner categories', { stage: 'build' }),
         job('001', 'sitemap-lastmod', 'Add lastmod to tenant sitemaps', { stage: 'merged', round: 1, reviews: all('PASS'), decision: 'APPROVE', updated: at(140) }),
         job('002', 'preview-link-copy', 'Copy button for page preview links', { stage: 'needs-human', round: 2, decision: null,
           reviews: { security: 'PASS', ux: 'CHANGES', ui: 'PASS', code: 'PASS' },
@@ -932,7 +943,11 @@
       if (statuses.includes('active') || statuses.includes('paused')) continue;
       const next = run.units.find((u, i) => statuses[i] === 'queued');
       run.updated = now;
-      if (!next) { run.stage = 'pushed'; continue; }
+      if (!next) {
+        // the completion check runs before the push
+        if (run.completion !== 'complete') { run.completion = run.completion === 'checking' ? 'complete' : 'checking'; continue; }
+        run.stage = 'pushed'; continue;
+      }
       const id = `${run.id.split('-')[0]}-${next.unit.toLowerCase()}-${slugOf(next.title, 2)}`;
       next.job = id; next.status = 'active';
       board.jobs.push({ id, run: run.id, unit: next.unit, title: next.title, branch: run.branch, stage: 'spec', round: 0, maxRound: 2,

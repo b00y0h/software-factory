@@ -66,24 +66,43 @@ orchestrator creates branches or pushes.
 
 `/factory adr 0062` (a number, a file, or a folder):
 
-1. **Plan.** The spec-writer reads the ADR and its execution plan or workplan, then writes
-   `~/.factory/<repo>/runs/<adr>/plan.md`. It lists every unit in build order, marked `build`,
-   `skip: <reason>` (another repo, another team's work, or deferred) or `ask: <question>`
-   (needs an input only you have). Release and launch conditions go under *Rollout gates*,
-   and they never block a build.
-2. **Build every unit in order on one branch**, named by `project.md`'s ADR-run rule (for
+1. **Find what's already done.** The spec-writer reads the ADR and its execution plan or
+   workplan, then surveys the work that already exists: the base branch, open branches and
+   PRs or MRs, the code itself, the ADR's own status table, and earlier factory runs. It
+   writes `~/.factory/<repo>/runs/<adr>/plan.md`, with every unit in build order marked:
+   - `done`: already on the base branch, with evidence for each criterion. No work.
+   - `adopt: <branch>`: built on an unmerged branch. That branch is merged into the run,
+     then the builder verifies it, finishes it and proves it.
+   - `build`: not started, or only partly done (the spec lists what's already in place,
+     and the builder finishes the rest).
+   - `skip: <reason>`: another repo, another team's work, or deferred.
+   - `ask: <question>`: needs an input only you have.
+
+   Release and launch conditions go under *Rollout gates*, and they never block a build.
+2. **Build every unfinished unit in order on one branch.** If the ADR's branch already
+   exists, the run continues on it (merging the base branch in if it has fallen behind)
+   and updates its PR. Otherwise it creates one, named by `project.md`'s ADR-run rule (for
    example `feature/0062-…`, when `feature/` is what triggers a preview). Each unit is a full
    job:
-   - its spec adopts the plan's unit word for word, plus a *Drift from source* note for
-     anything that has moved since the plan was written;
+   - its spec adopts the plan's unit word for word, with a *Drift from source* note and an
+     *Already in place* list;
    - it gets its own builder;
    - its reviewers see only that unit's diff;
    - its approver accepts it onto the branch. Risky changes (schema, permissions, CI) are
      flagged for the PR reviewer instead of stopping the run.
-3. **Push once.** When the last unit is accepted, the branch is pushed and a PR opens, never
-   with auto-merge (and as a draft if `project.md` says so), so you can review the whole ADR
-   on its preview. The PR lists every unit, what was skipped and why, the approvers' flags,
-   and the rollout gates.
+3. **Check the whole ADR is complete.** The approver checks every acceptance criterion of
+   every unit on the finished branch, including the units that were done before the run.
+   Gaps get one round of fix jobs. If any remain, the run pauses for you
+   (`/factory continue <run> push anyway` ships with the gaps listed in the PR).
+4. **Update the workplan.** If the ADR has a status table, a last unit records every unit's
+   outcome in it.
+5. **Push once.** The branch is pushed and a PR opens (or the existing one is updated),
+   never with auto-merge, and as a draft if `project.md` says so. You review the whole ADR
+   on its preview. The PR lists every unit and how it got done, everything skipped and why,
+   the completion check, the approvers' flags, any overlaps, and the rollout gates.
+
+Running `/factory adr` on an ADR that already has a run picks that run up instead of starting
+another, after refreshing its plan, so work merged in the meantime is marked done.
 
 If a unit is escalated, or reaches an `ask:`, the run pauses. Use `/factory approve`,
 `/factory rework`, or `/factory continue <answer>`. `/factory continue` also resumes a run
