@@ -49,13 +49,36 @@ the session ends. Add `?demo` to the link to see it run on sample data. To serve
 python3 -m http.server 8765 --bind 127.0.0.1 --directory ~/.factory/<repo>
 ```
 
+## Accessibility: WCAG 2.2 AA on every UI change
+
+Whenever a change touches UI (the profile's *UI paths*, or component, markup and style files
+by default; tests and generated files don't count), a fifth reviewer joins the round:
+`review-a11y`, an accessibility specialist on opus. It holds the change to **WCAG 2.2 Level
+AA**, every A and AA success criterion, including the 2.2 additions (focus not obscured,
+dragging alternatives, 24×24 target size, consistent help, redundant entry, accessible
+authentication). It:
+
+- scans the rendered UI with axe-core in a real browser (Playwright), where contrast and
+  layout are actually computed, in every theme and at 320px;
+- measures contrast ratios and target sizes from computed styles, and drives the keyboard
+  path;
+- reviews the code for what tools can't decide: names, roles, states, focus management,
+  live regions, error association.
+
+Any failure, **or any applicable criterion it couldn't verify**, is `CHANGES`. The builder is
+told to build accessibly and to prove it in `build.md`. Before an ADR run is pushed, the same
+specialist checks the run's whole UI together, and the completion check treats anything it
+finds as a gap. No tool can certify conformance on its own, so this pairs automated scans
+with an expert review that must show its evidence. Content that people add later through a
+CMS is outside any code review.
+
 ## How a job runs
 
 | Step | Agent | Writes |
 |---|---|---|
 | Spec | `spec-writer` (opus), built on the spec-author templates | `jobs/<id>/spec.md`, with numbered acceptance criteria. If the work already has a written spec, its file table and criteria are copied word for word. |
 | Build | `builder` (opus), in its own git worktree | commits, plus `build.md` with the evidence for each criterion |
-| Review | `review-security` (opus), `review-ux`, `review-ui`, `review-code` (sonnet), in parallel | `round-N/review-<name>.md`, starting `VERDICT: PASS` or `VERDICT: CHANGES` |
+| Review | `review-security` (opus), `review-ux`, `review-ui`, `review-code` (sonnet), plus `review-a11y` (opus) **whenever the change touches UI**, in parallel | `round-N/review-<name>.md`, starting `VERDICT: PASS` or `VERDICT: CHANGES` |
 | Approve | `approver` (opus) | `decision.md`, starting `APPROVE` or `ESCALATE` |
 
 Any `CHANGES` sends the round back to the same builder. After two rounds, or on `ESCALATE`,

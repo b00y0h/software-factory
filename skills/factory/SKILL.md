@@ -1,6 +1,6 @@
 ---
 name: factory
-description: Run the software factory in any repository. Takes one feature, or every unit of an ADR in build order, through spec (built on spec-author), build, four parallel reviews and approval, with every step done by a subagent and tracked on a live dashboard. Several sessions can run jobs or ADRs at once, one per session. Use only when the user types /factory.
+description: Run the software factory in any repository. Takes one feature, or every unit of an ADR in build order, through spec (built on spec-author), build, parallel reviews (security, UX, UI, code, and a WCAG 2.2 AA accessibility check on every UI change) and approval, with every step done by a subagent and tracked on a live dashboard. Several sessions can run jobs or ADRs at once, one per session. Use only when the user types /factory.
 argument-hint: "init | adr <ADR> | continue [run] [answer] | <feature> | next | approve <job-id> | rework <job-id> <note>"
 disable-model-invocation: true
 ---
@@ -48,17 +48,17 @@ The factory works in two ways:
                    │     builder      │◄────────────────────┐
                    │       opus       │                     │
                    └─────────┬────────┘                     │
-        ┌─────────────┬──────┴──────┬─────────────┐         │
-        ▼             ▼             ▼             ▼         │
-  ┌───────────┐ ┌───────────┐ ┌───────────┐ ┌───────────┐   │
-  │  security │ │     ux    │ │ ui design │ │    code   │   │
-  │    opus   │ │   sonnet  │ │   sonnet  │ │   sonnet  │   │
-  └─────┬─────┘ └─────┬─────┘ └─────┬─────┘ └─────┬─────┘   │
-        └─────────────┴──────┬──────┴─────────────┘         │
+       ┌──────────┬──────────┼──────────┬──────────┐        │
+       ▼          ▼          ▼          ▼          ▼        │
+  ┌─────────┐┌─────────┐┌─────────┐┌─────────┐┌─────────┐   │
+  │ security││    ux   ││ui design││   code  ││   a11y  │   │
+  │   opus  ││  sonnet ││  sonnet ││  sonnet ││opus · UI│   │
+  └────┬────┘└────┬────┘└────┬────┘└────┬────┘└────┬────┘   │
+       └──────────┴──────────┼──────────┴──────────┘        │
                              ▼                              │
                    ┌──────────────────┐   any CHANGES:      │
                    │   WAIT FOR ALL   ├─────────────────────┘
-                   │   4 reviews in   │   resume builder
+                   │  reviews are in  │   resume builder
                    └─────────┬────────┘   (max 2 rounds)
                              ▼ all PASS
                    ┌──────────────────┐
@@ -88,6 +88,7 @@ tools it may use, so reviewers and the approver cannot edit code: they have no E
 | review-ux | `software-factory:review-ux` | sonnet | `round-N/review-ux.md` |
 | review-ui | `software-factory:review-ui` | sonnet | `round-N/review-ui.md` |
 | review-code | `software-factory:review-code` | sonnet | `round-N/review-code.md` |
+| review-a11y | `software-factory:review-a11y` | opus | `round-N/review-a11y.md`, **only when the change touches UI** (WCAG 2.2 AA) |
 | approver | `software-factory:approver` | opus | `decision.md` |
 
 The spec-writer is the spec-author skill folded in. Its templates are in this skill's
@@ -121,7 +122,7 @@ Agents get their context from those files, never from this conversation.
 | Knob | Value | Meaning |
 |---|---|---|
 | `MAX_ROUNDS` | 2 | Review rounds a job gets before it goes to `needs-human` |
-| `REVIEWERS` | security, ux, ui, code | Role `review-<name>` writes `review-<name>.md` |
+| `REVIEWERS` | security, ux, ui, code, plus a11y when the change touches UI | Role `review-<name>` writes `review-<name>.md` |
 
 ## The floor, the state folder, and your board file
 
@@ -221,7 +222,8 @@ Before any command:
    PR or MR (`gh pr view <url> --json state`, or `glab mr view <url> -F json`). If it is
    merged, set `merged`. Never poll.
 7. Keep `FACTORY/project.json` in step with `PROFILE`: its `name`, `host` and `merge` from the
-   Settings table, and `generated` from the *Generated files* list. Rewrite it (write a `.tmp`
+   Settings table, `generated` from the *Generated files* list, and `ui` from the *UI paths*
+   list. Rewrite it (write a `.tmp`
    file, then `mv`) only if something differs.
 
 ## Setup
@@ -232,7 +234,7 @@ Before any command:
 2. Copy `SKILL_DIR/assets/README.md` to `WORKTREE/factory/README.md`. Spawn the `surveyor`. It
    inspects the repo and writes `PROFILE`.
 3. Write `FACTORY/project.json` from `PROFILE`: the name, host and merge mode from Settings,
-   and the *Generated files* patterns as `generated`.
+   the *Generated files* patterns as `generated`, and the *UI paths* patterns as `ui`.
 4. Show the user the Settings table, and say in a line what the merge mode and the branch
    rules mean for them. Then stop and ask them to read `factory/project.md` (and commit it,
    so teammates and other sessions share it) before the first job. It governs what gets
@@ -309,20 +311,27 @@ address the builder by that ID. When it finishes, `build.md` must exist and star
 `BLOCKED:` line. Go to round 1.
 
 **Review round N: WAIT FOR ALL.**
-1. `mkdir ROUND_DIR`. Set `stage: review`, `round: N`, and all four reviews to `pending`.
-2. Spawn all four reviewers **in a single message**, so they run in parallel.
-3. Each time one finishes, read the first line of its file and update its chip in `BOARD`
+1. **Does this change touch UI?** Run
+   `git -C <WORKTREE> diff --name-only <DIFF_BASE>..HEAD | python3 <SKILL_DIR>/scripts/touches.py ui <FACTORY>/project.json`.
+   It prints the UI files and exits 0 when there are any (the profile's *UI paths*, or the
+   built-in list of component, markup and style files; tests, stories and generated files never
+   count). If it does, this round has a fifth reviewer, `review-a11y`, which holds the change
+   to WCAG 2.2 AA. Once a job's round has needed it, every later round of that job does too.
+2. `mkdir ROUND_DIR`. Set `stage: review`, `round: N`, each reviewer this round runs to
+   `pending`, and `a11y` to `n/a` when it doesn't run.
+3. Spawn every reviewer for this round **in a single message**, so they run in parallel.
+4. Each time one finishes, read the first line of its file and update its chip in `BOARD`
    right away. The dashboard fills in as verdicts land.
-4. The round is done only when **all four files exist in ROUND_DIR**. Never resume the
-   builder mid-round. If a reviewer finished without writing its file, spawn it again
-   once. If there is still no file, move the job to `needs-human`.
+5. The round is done only when **every spawned reviewer's file exists in ROUND_DIR**. Never
+   resume the builder mid-round. If a reviewer finished without writing its file, spawn it
+   again once. If there is still no file, move the job to `needs-human`.
 
 A verdict is `PASS` only if the file's first line is exactly `VERDICT: PASS`. Anything else
 counts as `CHANGES`. The factory fails closed.
 
 | Outcome | Next |
 |---|---|
-| All four PASS | Approve |
+| Every reviewer PASS (a11y included when it ran) | Approve |
 | Any CHANGES, and `N < maxRound` | Move this round into `history` and set stage `build`. Then `SendMessage` to `builder-<JOB>`: *"Round N reviews are in ROUND_DIR. Address every CHANGES item, commit, and rewrite build.md."* When it finishes, run round N+1. |
 | Any CHANGES, and `N = maxRound` | Set `needs-human` with `reason: "Review rounds used up: <reviewers still asking for CHANGES>"`. |
 
@@ -418,7 +427,14 @@ that run up (see **Continuing a run**), which refreshes its plan first.
 7. **Bring the base branch in, then check that the ADR is complete.** When every other unit is
    `done` or `skipped`, first bring the base branch in (see **Bringing the base branch in**),
    so the completion check runs on what will really ship. Then set the run's `completion` to
-   `checking` and spawn `approver` with `MODE=complete` and `RUN_DIR`.
+   `checking`.
+   - **If the run changed UI anywhere** (`git -C <WORKTREE> diff --name-only <BASE_REF>...HEAD`
+     piped to `touches.py ui`), first spawn `review-a11y` with `MODE=complete` and `RUN_DIR`.
+     It checks the whole run's UI together, as it will ship, against WCAG 2.2 AA, and writes
+     `RUN_DIR/a11y.md`. Units were checked one at a time, and combinations are where
+     regressions hide.
+   - Then spawn `approver` with `MODE=complete` and `RUN_DIR`. It treats every blocking item
+     in `RUN_DIR/a11y.md` as a gap.
    It checks every acceptance criterion of every unit, including the ones that were done
    before the run, on the current `HEAD`, and writes `RUN_DIR/completion.md`.
    - `COMPLETE`: set `completion: complete` and go on.
@@ -596,9 +612,9 @@ bringing the base branch in before it pushes.
       "stage": "review",
       "round": 2,
       "maxRound": 2,
-      "reviews": { "security": "CHANGES", "ux": "PASS", "ui": "pending", "code": "PASS" },
+      "reviews": { "security": "CHANGES", "ux": "PASS", "ui": "pending", "code": "PASS", "a11y": "pending" },
       "history": [
-        { "round": 1, "reviews": { "security": "CHANGES", "ux": "PASS", "ui": "CHANGES", "code": "PASS" } }
+        { "round": 1, "reviews": { "security": "CHANGES", "ux": "PASS", "ui": "CHANGES", "code": "PASS", "a11y": "CHANGES" } }
       ],
       "decision": null,
       "reason": null,
@@ -623,8 +639,9 @@ bringing the base branch in before it pushes.
   `completion` is `null`, `checking`, `complete` or `gaps`.
 - A floor is busy while any board file with that `floor` holds a job between `spec` and
   `approval` or `needs-human`, or a run that is `planning`, `running` or `paused`.
-- `reviews` is the current round, and `history` holds the finished ones. Use `decision` for
-  `APPROVE`, `ESCALATE` or `HUMAN-APPROVED`.
+- `reviews` is the current round, and `history` holds the finished ones. Each reviewer's
+  value is `pending`, `PASS` or `CHANGES`, and `a11y` is `n/a` in a round whose change touches
+  no UI. Use `decision` for `APPROVE`, `ESCALATE` or `HUMAN-APPROVED`.
 
 ## Rules
 

@@ -103,6 +103,24 @@ test file) don't need the lock.
 - If `git commit` fails because signing failed, don't try variations. Write
   `BLOCKED: commit signing failed` at the top of `build.md` and stop.
 
+## When your change touches UI
+
+An accessibility reviewer holds every UI change to **WCAG 2.2 AA**, and it only passes what it
+has evidence for. Build it accessible from the start, and prove it:
+- Use native elements (`button`, `a`, `label`, `fieldset`, headings in order) before ARIA.
+  Custom widgets follow the ARIA Authoring Practices pattern, keyboard behavior included.
+- Every control has an accessible name that contains its visible label, a visible focus
+  style, and a pointer target of at least 24×24 CSS px.
+- Text meets 4.5:1 contrast (3:1 when large), and borders, icons and focus rings meet 3:1,
+  in every state and theme. Use the design tokens.
+- Errors are identified in text and tied to their field. Status messages are announced
+  (`role="status"` or `aria-live`). Dialogs move focus in and return it on close.
+- Add tests that prove it, by the repo's means in `project.md`'s *Accessibility checks*:
+  keyboard tests, plus an axe check where the repo can render the component.
+
+Then add an **Accessibility** section to `build.md`: the WCAG criteria your change touches,
+and the evidence for each (test names, measured contrast ratios, target sizes).
+
 ## Write `JOB_DIR/build.md`
 
 Rewrite the whole file every round. It is yours alone.

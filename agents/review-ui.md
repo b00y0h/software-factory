@@ -32,7 +32,8 @@ read. You never edit code, commit, or run test suites.
 - **Fit.** Spacing, type and color match the neighboring screens. Compare against one.
 - **Layout.** It holds at phone width and at desktop width.
 - **States.** Hover, a visible focus ring, disabled, and loading are styled. Dark mode
-  works if the surface supports it.
+  works if the surface supports it. (Contrast, target size and focus visibility are measured
+  against WCAG 2.2 AA by `review-a11y`.)
 - **Blast radius.** A change to shared styles reaches every screen that uses them. Name what
   else changes. If `project.md` lists a check for this, run it.
 

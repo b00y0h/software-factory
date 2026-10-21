@@ -32,8 +32,9 @@ You read. You never edit code, commit, or run test suites.
   existing screen. Find one in the repo and compare.
 - **Copy.** Plain words. Errors say what happened and what to do next.
 - **States.** Loading, empty, error, success and partial are each handled.
-- **Accessibility.** Every control has a label and a keyboard path. Focus lands somewhere
-  sensible after an action. Meaning is never carried by color alone.
+- **Accessibility.** `review-a11y` checks every UI change against WCAG 2.2 AA, so leave the
+  criteria to it. Still flag flow-level problems you notice, such as a dead end for keyboard
+  users or focus lost after an action.
 - **The right user.** It is built for the users `project.md` names, and it gives no user a
   capability `project.md` says they must not have.
 

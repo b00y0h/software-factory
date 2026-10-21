@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="factory-dashboard-version" content="9">
+<meta name="factory-dashboard-version" content="10">
 <title>Software Factory</title>
 <!--
   The factory's dashboard. The master copy lives in the software-factory plugin
@@ -392,14 +392,16 @@
     { key: 'backlog',  name: 'Backlog',       who: [['backlog.md']] },
     { key: 'spec',     name: 'Spec',          who: [['spec-writer', 'opus']] },
     { key: 'build',    name: 'Build',         who: [['builder', 'opus']] },
-    { key: 'review',   name: 'Review',        who: [['security', 'opus'], ['ux · ui · code', 'sonnet']] },
+    { key: 'review',   name: 'Review',        who: [['security', 'opus'], ['ux · ui · code', 'sonnet'], ['a11y on UI changes', 'opus']] },
     { key: 'approval', name: 'Approve',       who: [['approver', 'opus']] },
     { key: 'done',     name: 'Done',          who: null },   // filled from board.project.merge
   ];
   // `done` is an ADR unit accepted onto its run's branch; jobs end in merging/merged.
   const COLUMN_OF = { spec: 'spec', build: 'build', review: 'review', approval: 'approval', merging: 'done', merged: 'done', done: 'done' };
   const ACTIVE = new Set(['spec', 'build', 'review', 'approval']);
-  const REVIEWERS = [['security', 'sec'], ['ux', 'ux'], ['ui', 'ui'], ['code', 'code']];
+  // a11y (WCAG 2.2 AA) only runs when a change touches UI; a round without it shows no a11y chip
+  const REVIEWERS = [['security', 'sec'], ['ux', 'ux'], ['ui', 'ui'], ['code', 'code'], ['a11y', 'a11y']];
+  const ranIn = (reviews, k) => k !== 'a11y' || (reviews && reviews.a11y != null && reviews.a11y !== 'n/a');
   const POLL_MS = 2000;
 
   const $ = (id) => document.getElementById(id);
@@ -419,7 +421,10 @@
     return Math.round(s / 86400) + 'd ago';
   }
   function roundsOf(job) {
-    const out = (job.history || []).map((h) => ({ round: h.round, reviews: h.reviews || {}, past: true }));
+    // one row per round: if a round was written to history twice, the later entry wins
+    const byRound = new Map();
+    for (const h of job.history || []) byRound.set(h.round, h);
+    const out = [...byRound.values()].map((h) => ({ round: h.round, reviews: h.reviews || {}, past: true }));
     if (job.round > 0 && job.reviews && !out.some((r) => r.round === job.round)) {
       out.push({ round: job.round, reviews: job.reviews, past: false });
     }
@@ -442,8 +447,9 @@
       case 'spec': return 'writing the spec';
       case 'build': return r > 0 ? `fixing round ${r} reviews` : 'building';
       case 'review': {
-        const n = REVIEWERS.filter(([k]) => verdictOf(job.reviews?.[k]) !== 'pending').length;
-        return `round ${r} · ${n} of 4 reviews in`;
+        const ran = REVIEWERS.filter(([k]) => ranIn(job.reviews, k));
+        const n = ran.filter(([k]) => verdictOf(job.reviews?.[k]) !== 'pending').length;
+        return `round ${r} · ${n} of ${ran.length} reviews in`;
       }
       case 'approval': return 'deciding';
       case 'merging': return board.project?.merge === 'open-only'
@@ -550,7 +556,7 @@
 
   function chipsRow(job, r) {
     return `<div class="round${r.past ? ' past' : ''}"><span class="round-n">R${r.round}</span>` +
-      REVIEWERS.map(([k, short]) => {
+      REVIEWERS.filter(([k]) => ranIn(r.reviews, k)).map(([k, short]) => {
         const v = verdictOf(r.reviews[k]);
         const key = `${job.id}:${r.round}:${k}`;
         const before = seenVerdicts.get(key);
@@ -558,7 +564,7 @@
         seenVerdicts.set(key, v);
         const live = v === 'pending' && job.stage === 'review' && !r.past;
         const icon = v === 'pass' ? '✓' : v === 'changes' ? '↺' : '·';
-        const label = `${k}: ${v === 'pending' ? 'pending' : v.toUpperCase()}`;
+        const label = `${k === 'a11y' ? 'a11y (WCAG 2.2 AA)' : k}: ${v === 'pending' ? 'pending' : v.toUpperCase()}`;
         return `<span class="chip ${v}${live ? ' live' : ''}${landed ? ' landed' : ''}" title="${esc(label)}" aria-label="${esc(label)}">${icon} ${short}</span>`;
       }).join('') + '</div>';
   }
@@ -940,7 +946,7 @@
   function jobFiles(job) {
     const files = [['feature.md', 'Feature'], ['spec.md', 'Spec'], ['build.md', 'Build'], ['rework.md', 'Rework']];
     const maxR = Math.max(job.round || 0, ...(job.history || []).map((h) => h.round || 0));
-    for (let r = 1; r <= maxR; r++) for (const [k, short] of REVIEWERS) files.push([`round-${r}/review-${k}.md`, short, r, `Round ${r} ${k} review`]);
+    for (let r = 1; r <= maxR; r++) for (const [k, short] of REVIEWERS) files.push([`round-${r}/review-${k}.md`, short, r, `Round ${r} ${k === 'a11y' ? 'accessibility' : k} review`]);
     files.push(['decision.md', 'Decision']);
     return files;
   }
@@ -956,7 +962,7 @@
     if (!run) return;
     const base = `runs/${encodeURIComponent(run.id)}`;
     openDocs({ key: 'run:' + id, meta: `${run.branch || run.id} · ${run.stage || ''}`, title: run.title || run.id,
-      base, files: [['plan.md', 'Run plan']], read: (p) => (DEMO ? demoRunFile(run, p) : readFile(base, p)) });
+      base, files: [['plan.md', 'Run plan'], ['a11y.md', 'Accessibility'], ['completion.md', 'Completion check']], read: (p) => (DEMO ? demoRunFile(run, p) : readFile(base, p)) });
   }
   async function openDocs({ key, meta, title, base, files, read }) {
     openKey = key;
@@ -1048,7 +1054,7 @@
   function hash(s) { let h = 2166136261; for (const c of s) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
   function demoSeed() {
     const t = Date.now(); const at = (min) => new Date(t - min * 60000).toISOString();
-    const all = (v) => ({ security: v, ux: v, ui: v, code: v });
+    const all = (v, ui = false) => ({ security: v, ux: v, ui: v, code: v, ...(ui ? { a11y: v } : {}) });
     const job = (n, slug, title, extra) => ({ id: `${n}-${slug}`, title, branch: `feature/${slug}`, round: 0, maxRound: 2, reviews: all('pending'), history: [], decision: null, reason: null, url: null, started: at(90), updated: at(5), ...extra });
     // Two ADR runs from two sessions (two floors), sharing a file, plus loose jobs.
     const unitJob = (run, unit, slug, title, extra) => ({ ...job('', '', title, extra), id: `${run.split('-')[0]}-${unit.toLowerCase()}-${slug}`,
@@ -1094,8 +1100,8 @@
         unitJob('0003-sitemap-freshness', 'U1', 'sitemap-writer', 'Sitemap writer', { stage: 'done', round: 1, reviews: all('PASS'), decision: 'APPROVE', updated: at(610) }),
         job('001', 'sitemap-lastmod', 'Add lastmod to tenant sitemaps', { stage: 'merged', round: 1, reviews: all('PASS'), decision: 'APPROVE', updated: at(140) }),
         job('002', 'preview-link-copy', 'Copy button for page preview links', { stage: 'needs-human', round: 2, decision: null,
-          reviews: { security: 'PASS', ux: 'CHANGES', ui: 'PASS', code: 'PASS' },
-          history: [{ round: 1, reviews: { security: 'PASS', ux: 'CHANGES', ui: 'CHANGES', code: 'PASS' } }],
+          reviews: { security: 'PASS', ux: 'CHANGES', ui: 'PASS', code: 'PASS', a11y: 'PASS' },
+          history: [{ round: 1, reviews: { security: 'PASS', ux: 'CHANGES', ui: 'CHANGES', code: 'PASS', a11y: 'CHANGES' } }],
           reason: 'Review rounds used up: ux still wants focus to return to the row after copying.', updated: at(25) }),
         job('003', 'rate-limiting', 'Rate-limit the public form submit endpoint', { stage: 'review', round: 2,
           files: ['apps/api/src/forms/submit.ts'],
@@ -1103,7 +1109,7 @@
           history: [{ round: 1, reviews: { security: 'CHANGES', ux: 'PASS', ui: 'CHANGES', code: 'PASS' } }] }),
         job('004', 'media-empty-state', 'Empty state for the Media Library', { stage: 'build' }),
         job('005', 'variant-id-report', 'Show variant_id on the experiment report', { stage: 'spec', updated: at(1) }),
-        job('006', 'duplicate-block-shortcut', 'Keyboard shortcut to duplicate a block', { stage: 'approval', round: 1, reviews: all('PASS') }),
+        job('006', 'duplicate-block-shortcut', 'Keyboard shortcut to duplicate a block', { stage: 'approval', round: 1, reviews: all('PASS', true) }),
       ],
     };
   }
@@ -1111,7 +1117,10 @@
   let demoQueue = [];
   let demoTick = 0;
   let demoIdle = 0;
-  const pendingReviews = () => ({ security: 'pending', ux: 'pending', ui: 'pending', code: 'pending' });
+  // demo jobs whose title sounds like UI get the accessibility check too
+  const looksUi = (title) => /card|banner|button|page|panel|tab|hero|row|library|shortcut|empty state/i.test(title || '');
+  const pendingReviews = (title) => ({ security: 'pending', ux: 'pending', ui: 'pending', code: 'pending',
+    ...(looksUi(title) ? { a11y: 'pending' } : { a11y: 'n/a' }) });
   const slugOf = (t, n) => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').split('-').slice(0, n).join('-');
   // A run starts its next queued unit once the last one is accepted, and pushes after the final one.
   function demoRuns(now) {
@@ -1131,7 +1140,7 @@
       const id = `${run.id.split('-')[0]}-${next.unit.toLowerCase()}-${slugOf(next.title, 2)}`;
       next.job = id; next.status = 'active';
       board.jobs.push({ id, run: run.id, unit: next.unit, title: next.title, branch: run.branch, stage: 'spec', round: 0, maxRound: 2,
-        reviews: pendingReviews(), history: [], started: now, updated: now });
+        reviews: pendingReviews(next.title), history: [], started: now, updated: now });
     }
   }
   function demoStep() {
@@ -1150,18 +1159,18 @@
       const n = String(jobs.length + 1).padStart(3, '0');
       const slug = slugOf(title, 4);
       jobs.push({ id: `${n}-${slug}`, title, branch: `feature/${slug}`, stage: 'spec', round: 0, maxRound: 2,
-        reviews: pendingReviews(), history: [], started: now, updated: now });
+        reviews: pendingReviews(title), history: [], started: now, updated: now });
     } else if (active.length) {
       const j = active[demoTick % active.length];
       j.updated = now;
       if (j.stage === 'spec') j.stage = 'build';
-      else if (j.stage === 'build') { j.stage = 'review'; j.round += 1; j.reviews = { security: 'pending', ux: 'pending', ui: 'pending', code: 'pending' }; }
+      else if (j.stage === 'build') { j.stage = 'review'; j.round += 1; j.reviews = pendingReviews(j.title); }
       else if (j.stage === 'review') {
-        const pending = REVIEWERS.map(([k]) => k).filter((k) => verdictOf(j.reviews[k]) === 'pending');
+        const pending = REVIEWERS.map(([k]) => k).filter((k) => ranIn(j.reviews, k) && verdictOf(j.reviews[k]) === 'pending');
         if (pending.length) {
           const k = pending[hash(j.id + demoTick) % pending.length];
           j.reviews[k] = j.round > 1 || hash(j.id + j.round + k) % 100 < 72 ? 'PASS' : 'CHANGES';
-        } else if (REVIEWERS.every(([k]) => j.reviews[k] === 'PASS')) j.stage = 'approval';
+        } else if (REVIEWERS.every(([k]) => !ranIn(j.reviews, k) || j.reviews[k] === 'PASS')) j.stage = 'approval';
         else if (j.round < j.maxRound) { j.history.push({ round: j.round, reviews: { ...j.reviews } }); j.stage = 'build'; }
         else { j.stage = 'needs-human'; j.reason = 'Review rounds used up.'; }
       } else if (j.stage === 'approval') {

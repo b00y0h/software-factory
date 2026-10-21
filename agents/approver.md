@@ -84,8 +84,9 @@ moves after you decide, the job comes back to a human.
 Every unit of the run has been accepted or was already done. Before the branch is pushed,
 check that the ADR is actually **complete**, not just that each step passed.
 
-Read `RUN_DIR/plan.md`, the ADR, the plan's source for each unit, and every unit's job folder
-(`spec.md`, `build.md`, `decision.md`). Then, on the run branch's current `HEAD` in
+Read `RUN_DIR/plan.md`, the ADR, the plan's source for each unit, every unit's job folder
+(`spec.md`, `build.md`, `decision.md`), and `RUN_DIR/a11y.md` if the run changed UI. Every
+blocking item in `a11y.md` is a gap: WCAG 2.2 AA is part of done. Then, on the run branch's current `HEAD` in
 `WORKTREE`, go through every unit that isn't `skip`:
 
 - For each acceptance criterion, find where it holds now: the code, and a test that asserts

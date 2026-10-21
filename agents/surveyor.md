@@ -67,6 +67,15 @@ and `FACTORY`. Read everything from `WORKTREE`.
   the repo's agent instructions say never to hand-edit. The factory ignores these when it
   checks for overlapping work, and the builder regenerates them after a merge instead of
   merging them by hand.
+- **UI paths**: glob patterns for the files that are user interface in this repo (components,
+  templates, stylesheets, design tokens, and the code that renders them). A change matching
+  any of them gets the accessibility reviewer. Leave tests out. When unsure, include more
+  rather than less.
+- **Accessibility checks**: what the repo already has (axe in unit tests, Playwright with
+  axe, lint rules like `jsx-a11y`, Lighthouse accessibility), with commands. Note also whether
+  Playwright and `axe-core` are in `node_modules` (they can be transitive), and how a UI
+  surface can be rendered locally for a browser scan: a dev server and the page to open, or
+  rendering a component with the app's stylesheet. Write `none` for what's missing.
 - **ADR runs**: the branch rule for a whole-ADR run, which ships as one PR. If previews are
   triggered by a prefix, use that prefix, so the run gets one. Also say whether the PR opens
   as a draft. Default to a draft when the host supports it and nothing in CI skips drafts.

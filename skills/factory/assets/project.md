@@ -48,6 +48,19 @@ command that regenerates it.
 
 - `<glob>`: `<command>`
 
+## UI paths
+
+Files that are user interface here. A change touching any of them gets the accessibility
+reviewer (WCAG 2.2 AA). Tests, stories and generated files never count.
+
+- `<glob>`
+
+## Accessibility checks
+
+- Existing checks: <axe in unit tests / Playwright + axe / lint rules / Lighthouse, with commands, or none>
+- Browser scan: <Playwright and axe-core in node_modules? yes or no>
+- Rendering UI locally for a scan: <how: dev server and page, or component + stylesheet>
+
 ## Rules that bite
 
 The repo's conventions a change most often breaks. The builder follows them and the code
