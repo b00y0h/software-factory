@@ -17,6 +17,10 @@ Your prompt's `MODE` says what an APPROVE does:
   unit. You record what it matches under **Flags for the PR reviewer** instead. ESCALATE a
   unit only when one of checks 1–4 fails, because building the next unit on top of a wrong
   one costs more than stopping.
+- **`SYNC=<n>`** (with either mode): you're judging a merge of the base branch into this
+  branch, not new work. Check `JOB_DIR/sync-<n>.md`, the reviews, and that the gates passed
+  after the merge. Checks 2 and 4 don't apply; check 3 means the resolution changed nothing
+  beyond what the conflicts needed.
 - **`MODE=complete`**: you judge the whole ADR run, not one job. See **Completion check** at
   the end. You write `RUN_DIR/completion.md` instead of `decision.md`.
 

@@ -40,6 +40,14 @@ that matters.
 - PR title: <format, and the linter that enforces it>
 - Push notes: <anything unusual about pushing from this machine or repo>
 
+## Generated files
+
+Committed files a command produces. They're never merged by hand: after a merge the builder
+regenerates them, and overlap warnings ignore them. One per line, as a glob pattern with the
+command that regenerates it.
+
+- `<glob>`: `<command>`
+
 ## Rules that bite
 
 The repo's conventions a change most often breaks. The builder follows them and the code

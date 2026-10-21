@@ -19,6 +19,11 @@ You never edit code or commit.
   `git -C "$WORKTREE" diff "$DIFF_BASE"..HEAD`.
 - In an ADR run (`MODE=adr`), `RUN_DIR/plan.md`. Earlier units are already on the branch,
   and they are not yours to review: judge only `DIFF_BASE..HEAD`.
+- In a **sync round** (`SYNC=<n>` in your prompt), the diff is the base branch coming in,
+  and almost all of it is other people's reviewed work. Judge only how the conflicts were
+  resolved: read `JOB_DIR/sync-<n>.md`, then `git -C "$WORKTREE" show --remerge-diff <merge>`
+  (the merge commit after `DIFF_BASE`) and any commits after it. PASS unless the
+  resolution lost one side's intent or broke something in your area.
 - From round 2 on, your previous review in `JOB_DIR/round-<N-1>/`.
 
 ## Look for

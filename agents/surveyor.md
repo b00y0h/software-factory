@@ -61,6 +61,12 @@ and `FACTORY`. Read everything from `WORKTREE`.
   `factory/`.
 - **Previews**: whether PRs get a preview environment, what triggers one (prefix, label, an
   open PR), and where its URL appears. Write `none` if there are none.
+- **Generated files**: every committed file that a command produces (generated types, import
+  maps, registries, lockfiles), as glob patterns, each with the command that regenerates it.
+  Look for `generate`/`codegen` scripts, files headed "generated" or "do not edit", and what
+  the repo's agent instructions say never to hand-edit. The factory ignores these when it
+  checks for overlapping work, and the builder regenerates them after a merge instead of
+  merging them by hand.
 - **ADR runs**: the branch rule for a whole-ADR run, which ships as one PR. If previews are
   triggered by a prefix, use that prefix, so the run gets one. Also say whether the PR opens
   as a draft. Default to a draft when the host supports it and nothing in CI skips drafts.

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="factory-dashboard-version" content="8">
+<meta name="factory-dashboard-version" content="9">
 <title>Software Factory</title>
 <!--
   The factory's dashboard. The master copy lives in the software-factory plugin
@@ -164,6 +164,7 @@
   .overlap summary::-webkit-details-marker { display: none; }
   .overlap summary::before { content: "⚠ "; }
   .overlap ul { margin: 4px 0 0; padding-left: 18px; color: var(--muted); font-family: var(--mono); font-size: 11px; }
+  .overlap-note { margin: 3px 0 0; font-size: 11.5px; color: var(--muted); line-height: 1.4; }
   .card-id { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .unit-tag { font: 600 10.5px var(--mono); color: var(--accent); background: var(--accent-bg); padding: 1px 5px; border-radius: 5px; flex: none; }
   .human .card { border-color: var(--alert-line); }
@@ -663,15 +664,42 @@
   const RUN_ORDER = { running: 0, paused: 0, planning: 0, pushed: 1, merged: 2 };
 
   // Overlaps: open runs and standalone jobs (from any session) whose files intersect. Two
-  // paths overlap when they're equal, or one is a folder containing the other.
+  // paths overlap when they're equal, or one is a folder containing the other. Generated
+  // files never count: they're regenerated after a merge, never merged by hand.
   let overlapsById = new Map();
+  let overlapInfo = new Map();
   const normPath = (p) => String(p).trim().replace(/^`|`$/g, '').replace(/:\d+(-\d+)?$/, '').replace(/^\.\//, '').replace(/\/$/, '');
   const pathsOverlap = (x, y) => x === y || x.startsWith(y + '/') || y.startsWith(x + '/');
+  const DEFAULT_GENERATED = ['**/pnpm-lock.yaml', '**/package-lock.json', '**/yarn.lock', '**/bun.lockb', '**/payload-types.ts',
+    '**/importMap.js', '**/*.generated.*', '**/__generated__/**', '**/dist/**'];
+  function globToRe(glob) {
+    const g = String(glob).split(/:\s/)[0].trim().replace(/^`|`$/g, '');
+    let re = '';
+    for (let i = 0; i < g.length; i++) {
+      const c = g[i];
+      if (c === '*' && g[i + 1] === '*') {
+        if (g[i + 2] === '/') { re += '(?:.*/)?'; i += 2; } else { re += '.*'; i += 1; }
+      } else if (c === '*') re += '[^/]*';
+      else if (c === '?') re += '[^/]';
+      else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    }
+    return new RegExp('^' + re + '$');
+  }
+  // A session started before plugin 0.8 doesn't bring the base branch in before it pushes.
+  const syncsBeforePush = (plugin) => {
+    const [a = 0, b = 0] = String(plugin || '0').split('.').map(Number);
+    return a > 0 || b >= 8;
+  };
   function computeOverlaps() {
+    const generated = [...DEFAULT_GENERATED, ...(board.project?.generated || [])].map(globToRe);
+    const counts = (f) => { const p = normPath(f); return p && !generated.some((re) => re.test(p)); };
     const items = [
-      ...(board.runs || []).filter((r) => r.stage !== 'merged').map((r) => ({ id: r.id, title: r.title || r.id, files: r.files || [], recorded: r.overlaps || [] })),
-      ...(board.jobs || []).filter((j) => !j.run && j.stage !== 'merged').map((j) => ({ id: j.id, title: j.title || j.id, files: j.files || [], recorded: j.overlaps || [] })),
+      ...(board.runs || []).filter((r) => r.stage !== 'merged').map((r) => ({ id: r.id, title: r.title || r.id, kind: 'run', stage: r.stage,
+        syncs: syncsBeforePush(r.plugin), files: (r.files || []).filter(counts), recorded: r.overlaps || [] })),
+      ...(board.jobs || []).filter((j) => !j.run && j.stage !== 'merged').map((j) => ({ id: j.id, title: j.title || j.id, kind: 'job', stage: j.stage,
+        syncs: syncsBeforePush(j.plugin), files: (j.files || []).filter(counts), recorded: j.overlaps || [] })),
     ];
+    overlapInfo = new Map(items.map((i) => [i.id, i]));
     const open = new Set(items.map((i) => i.id));
     const out = new Map(items.map((i) => [i.id, new Map()]));
     const note = (from, to, title, files) => {
@@ -688,15 +716,40 @@
         if (shared.size) { note(a.id, b.id, b.title, [...shared]); note(b.id, a.id, a.title, [...shared]); }
       }
       // what the orchestrator recorded counts too, while the other side is still open
-      for (const o of items[i].recorded) if (open.has(o.with)) note(items[i].id, o.with, o.title || o.with, (o.files || []).map(normPath));
+      for (const o of items[i].recorded) {
+        const files = (o.files || []).filter(counts).map(normPath);
+        if (open.has(o.with) && files.length) note(items[i].id, o.with, o.title || o.with, files);
+      }
     }
     overlapsById = new Map([...out].map(([id, m]) => [id, [...m.values()]]));
   }
+  // Say what will happen, not just that it overlaps. Whatever merges second brings the first one's
+  // change in before it pushes. Likely first: a pushed run or an auto-merging job, then a one-off
+  // job (usually quicker than a run).
+  function overlapAdvice(me, other) {
+    const lead = (it) => (it.stage === 'pushed' || it.stage === 'merging' ? 3 : it.kind === 'job' ? 2 : 1);
+    const a = lead(me), b = lead(other);
+    const second = a > b ? other : b > a ? me : null;
+    let text = a > b
+      ? `This will likely merge first. ${other.title} brings its change in before it pushes, and that builder resolves any conflict.`
+      : b > a
+        ? `${other.title} will likely merge first. This brings that change in before it pushes, and its builder resolves any conflict.`
+        : 'Whichever pushes first merges first. The other brings that change in before its own push, and its builder resolves any conflict.';
+    const old = (second ? [second] : [me, other]).filter((it) => !it.syncs);
+    text += old.length
+      ? ` But ${old.map((it) => (it === me ? 'this one' : it.title)).join(' and ')} ${old.length > 1 ? 'are' : 'is'} on an older plugin that won't: restart its session and run /factory continue, or resolve the conflict in its MR.`
+      : ' Nothing to do.';
+    return text;
+  }
   function overlapHtml(id) {
-    return (overlapsById.get(id) || []).map((o) => `<details class="overlap" data-stop>
+    const me = overlapInfo.get(id);
+    return (overlapsById.get(id) || []).map((o) => {
+      const other = overlapInfo.get(o.with) || { title: o.title, kind: 'run', stage: '', syncs: true };
+      return `<details class="overlap" data-stop>
         <summary>Overlaps ${esc(o.title)} · ${o.files.length} file${o.files.length === 1 ? '' : 's'}</summary>
         <ul>${o.files.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>
-      </details>`).join('');
+      </details><p class="overlap-note">${esc(me ? overlapAdvice(me, other) : '')}</p>`;
+    }).join('');
   }
   const floorName = (p) => String(p || '').replace(/\/+$/, '').split('/').pop();
   function runHtml(run) {
@@ -839,8 +892,8 @@
     try { merged.project = projectText ? JSON.parse(projectText) : null; } catch { /* rewritten mid-read; next poll */ }
     const add = (doc) => {
       if (!merged.project && doc.project) merged.project = doc.project;
-      for (const r of doc.runs || []) merged.runs.push({ ...r, floor: r.floor || doc.floor });
-      for (const j of doc.jobs || []) merged.jobs.push({ ...j, floor: j.floor || doc.floor });
+      for (const r of doc.runs || []) merged.runs.push({ ...r, floor: r.floor || doc.floor, plugin: r.plugin || doc.plugin });
+      for (const j of doc.jobs || []) merged.jobs.push({ ...j, floor: j.floor || doc.floor, plugin: j.plugin || doc.plugin });
       if (doc.updated && (!merged.updated || doc.updated > merged.updated)) merged.updated = doc.updated;
     };
     for (const t of [...texts, legacy]) {

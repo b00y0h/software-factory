@@ -142,11 +142,13 @@ run side by side:
 - **Taking turns on the heavy work.** Builders run installs, builds, typechecks, lints and test
   suites under a shared lock (`~/.factory/<repo>/tests.lock`), so two sessions never swamp
   the machine with test suites at once. Specs and reviews still run in parallel.
-- **Overlap warnings.** Each run lists the files it plans to touch, and later the files it did
-  touch. When two open runs or jobs share a file (or one touches a folder the other changes
-  inside), both cards show a warning, the session says so when it notices, and the PR body
-  lists it. Whichever merges second will need to resolve conflicts. It's a warning, never a
-  stop.
+- **Overlap warnings, handled.** Each run lists the files it plans to touch, and later the
+  files it did touch. When two open runs or jobs share a file (generated files such as
+  lockfiles and generated types don't count), both cards show a warning that says which will
+  likely merge first and what happens next. Before anything is pushed, its builder brings the
+  latest base branch in, resolves any conflict, regenerates generated files and reruns the
+  gates. A hand-resolved conflict is reviewed like any other change, so overlapping work is
+  sorted out by the factory, not left for whoever merges the PR.
 
 `/factory continue <run>` picks a specific run back up, for example after its session ended.
 

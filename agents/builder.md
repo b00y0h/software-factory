@@ -29,6 +29,30 @@ base branch, finish it rather than rewrite it:
 
 If `feature.md` is a **completion gap**, fix exactly that gap and prove it.
 
+## Bringing the base branch in (`SYNC=<n>`)
+
+When your prompt or message carries `SYNC=<n>`, your only job is to bring the base branch
+into this branch, so it merges cleanly and picks up work that merged first:
+
+1. `git -C "$WORKTREE" fetch origin <base>`, then `git -C "$WORKTREE" merge --no-ff
+   origin/<base>`. Never rebase, and never force anything.
+2. Resolve each conflict so **both sides' intent survives**: keep the base branch's change
+   and this branch's change, adapting one to the other where they touch the same lines.
+   Never resolve by dropping one side wholesale.
+3. **Generated files** (`project.md`'s *Generated files*: lockfiles, generated types,
+   registries) are never merged by hand. Take either side to finish the merge, then
+   regenerate them with the repo's own commands, so they reflect both sides. Do the same for
+   any generated file the merge touched, even without a conflict.
+4. Re-run the gates for every package the merge touched on either side of a conflict, under
+   the lock. Fix anything the combination broke, in separate commits after the merge.
+5. Write `JOB_DIR/sync-<n>.md`. Its first line is exactly `CLEAN` (no conflicts),
+   `RESOLVED <count>`, or `BLOCKED: <reason>`. Then list each conflicted file and how you
+   resolved it, the files you regenerated, and the commands you ran with their results.
+
+If a conflict needs a product decision, because the two sides want opposite behavior, don't
+guess. Run `git merge --abort`, write `BLOCKED:` with the files and the two intents, and
+stop.
+
 ## Read first
 
 - `WORKTREE/factory/project.md`: this repo's setup, test commands and rules. Where it is more

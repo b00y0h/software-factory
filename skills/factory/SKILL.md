@@ -108,7 +108,8 @@ Agent(subagent_type: "software-factory:<role>", description: "<role> <JOB>",
                ADR=<abs>                            ← spec-writer, MODE=plan only
                BRANCH=<branch>                      ← once it exists
                DIFF_BASE=<sha>                      ← builder, reviewers, approver
-               ROUND_DIR=<abs>                      ← reviewers, and the builder on resume")
+               ROUND_DIR=<abs>                      ← reviewers, and the builder on resume
+               SYNC=<n>                             ← only while bringing the base branch in")
 ```
 
 `MODE` is `job` for a feature, `unit` for the spec-writer on an ADR unit, `plan` for the
@@ -219,6 +220,9 @@ Before any command:
 6. Tidy up your own board file only: if your job is `merging` or your run `pushed`, check its
    PR or MR (`gh pr view <url> --json state`, or `glab mr view <url> -F json`). If it is
    merged, set `merged`. Never poll.
+7. Keep `FACTORY/project.json` in step with `PROFILE`: its `name`, `host` and `merge` from the
+   Settings table, and `generated` from the *Generated files* list. Rewrite it (write a `.tmp`
+   file, then `mv`) only if something differs.
 
 ## Setup
 
@@ -227,8 +231,8 @@ Before any command:
    above), so the user can watch the setup too.
 2. Copy `SKILL_DIR/assets/README.md` to `WORKTREE/factory/README.md`. Spawn the `surveyor`. It
    inspects the repo and writes `PROFILE`.
-3. Write the project's name, host and merge mode from `PROFILE` Settings to
-   `FACTORY/project.json`.
+3. Write `FACTORY/project.json` from `PROFILE`: the name, host and merge mode from Settings,
+   and the *Generated files* patterns as `generated`.
 4. Show the user the Settings table, and say in a line what the merge mode and the branch
    rules mean for them. Then stop and ask them to read `factory/project.md` (and commit it,
    so teammates and other sessions share it) before the first job. It governs what gets
@@ -236,24 +240,62 @@ Before any command:
 
 ## Overlap with other sessions
 
-Two jobs or runs that change the same files will conflict when the second one merges. The
-factory can't prevent that, but it warns early, so you can sequence the work.
+Two jobs or runs that change the same files may conflict when the second one merges. The
+factory handles that itself: every job and run brings the base branch in before it pushes
+(see **Bringing the base branch in**), and its builder resolves any conflict, with the
+resolution reviewed like any other change. Overlap warnings tell the user what is coming,
+and that nothing needs doing unless the two pieces of work disagree about the same code.
 
 - Every board file lists the repo paths its work touches in `files`: the planned paths
   (from the plan's *Files this run touches*, or a job spec's *Files to touch*) as soon as
   they're known, plus the actually changed paths
   (`git -C <WORKTREE> diff --name-only <BASE_REF>...HEAD`) after each accepted unit or job.
   Strip line ranges (`Foo.ts:620-700` → `Foo.ts`).
+- **Generated files never count.** A generated file is regenerated after a merge, never
+  merged by hand, so overlapping on one means nothing. Leave out every path that matches
+  `PROFILE`'s *Generated files* or the built-in list: `**/pnpm-lock.yaml`,
+  `**/package-lock.json`, `**/yarn.lock`, `**/bun.lockb`, `**/payload-types.ts`,
+  `**/importMap.js`, `**/*.generated.*`, `**/__generated__/**` and `**/dist/**`.
 - Two paths overlap when they're equal, or one is a folder containing the other.
 - **Check overlaps** by reading every other file in `FACTORY/board/` whose job or run isn't
   `merged`, and intersecting its `files` with yours. Record the result in your run's or
   job's `overlaps` as `[{ "with": "<id>", "title": "<title>", "files": [...] }]`.
 - Check after the plan (or a job's spec), and again after each accepted unit. When a new
-  overlap appears, tell the user in one line: what, with which run, and which files. Then
-  **continue**. An overlap is a warning, not a stop.
-- The dashboard also computes overlaps across every board file, so the warning appears on
-  both sides, even for a run that started after yours.
-- The final PR body lists any overlaps, so whoever merges second knows to expect conflicts.
+  overlap appears, tell the user in one line what will happen, not just that it exists: which
+  will likely merge first (a pushed run or an auto-merging job, else a one-off job, which is
+  usually quicker than a run), and that the other will bring that change in before it
+  pushes. Then **continue**. Ask the user only if the two pieces of work clearly want
+  opposite things from the same code. That is a product decision, not a merge.
+- The dashboard computes the same overlaps across every board file, without generated files,
+  and words each warning the same way.
+- The final PR body lists any overlaps, and how the sync resolved them.
+
+## Bringing the base branch in
+
+Before anything is pushed, the branch must contain the latest base branch, so the PR merges
+cleanly and its preview shows what will really ship. Overlapping work that merged first is
+picked up here, by the factory, rather than left as a conflict for whoever merges the PR.
+
+1. `git -C <WORKTREE> fetch origin <BASE>`. If
+   `git -C <WORKTREE> merge-base --is-ancestor <BASE_REF> HEAD` succeeds, the branch is
+   already current. Skip the rest.
+2. Record `DIFF_BASE = git -C <WORKTREE> rev-parse HEAD`, then have the builder bring it in
+   (prompt `SYNC=<n>`):
+   - **A job:** resume `builder-<JOB>` with `SendMessage`: *"Bring <BASE_REF> into this branch
+     (sync <n>). Write JOB_DIR/sync-<n>.md."*
+   - **A run:** add a unit `SYNC` (title "Bring <BASE> in") after the last accepted unit, and
+     run it as a job (`JOB` = `<adr>-sync-<n>`), spawning `builder` with `SYNC=<n>`.
+3. Read the first line of `JOB_DIR/sync-<n>.md`:
+   - `CLEAN`: the merge had no conflicts, and the builder re-ran the gates and regenerated the
+     generated files. Accept it and record `HEAD` as the reviewed commit.
+   - `RESOLVED <n>`: the builder resolved conflicts by hand. Run a review round with
+     `SYNC=<n>` (reviewers judge the resolution, not the whole of the base branch), then
+     the approver. Accept on `APPROVE`; otherwise `needs-human`.
+   - `BLOCKED: <reason>`: a conflict needs a product decision. Set `needs-human` (and pause a
+     run) with that reason.
+
+Never rebase and never force-push. The builder does the merge and every resolution; you only
+check that the branch is current and read the result.
 
 ## The job loop (shared by jobs and run units)
 
@@ -373,8 +415,10 @@ that run up (see **Continuing a run**), which refreshes its plan first.
    as the reviewed commit). Set the job's stage `done` and the unit `done`. Add the unit's
    changed paths to the run's `files`, check overlaps again, and go on to the next unit.
    Never start a unit on top of an unreviewed commit.
-7. **Check that the ADR is complete.** When every other unit is `done` or `skipped`, set the
-   run's `completion` to `checking` and spawn `approver` with `MODE=complete` and `RUN_DIR`.
+7. **Bring the base branch in, then check that the ADR is complete.** When every other unit is
+   `done` or `skipped`, first bring the base branch in (see **Bringing the base branch in**),
+   so the completion check runs on what will really ship. Then set the run's `completion` to
+   `checking` and spawn `approver` with `MODE=complete` and `RUN_DIR`.
    It checks every acceptance criterion of every unit, including the ones that were done
    before the run, on the current `HEAD`, and writes `RUN_DIR/completion.md`.
    - `COMPLETE`: set `completion: complete` and go on.
@@ -389,8 +433,10 @@ that run up (see **Continuing a run**), which refreshes its plan first.
    evidence), adopted (with branch and PR/MR), built (with job id), fixed after the
    completion check, or skipped (with the reason).
 9. **Push, and open or update the preview PR:**
+   - Bring the base branch in once more if it moved while the workplan unit ran (usually a
+     no-op).
    - `git -C <WORKTREE> log --oneline <BASE_REF>..HEAD` must contain only this ADR's work:
-     the run's units, plus any adopted or continued branch.
+     the run's units, plus any adopted or continued branch, plus the sync merges.
    - Push exactly HEAD, and no tags:
      `git -C <WORKTREE> push --no-follow-tags -u origin HEAD:refs/heads/<BRANCH>`.
      If the output shows `[new tag]`, stop and tell the user. Pushing a continued branch
@@ -419,8 +465,8 @@ that run up (see **Continuing a run**), which refreshes its plan first.
 
 **After the push**, `/factory rework <job-id> <note>` still works on a run unit: the builder
 commits on top of the branch, the unit is reviewed again from that commit, and when it is
-accepted you push again (fast-forward only, with the same command). The PR and its preview
-update themselves.
+accepted you bring the base branch in and push again (fast-forward only, with the same
+command). The PR and its preview update themselves.
 
 ## Continuing a run
 
@@ -453,12 +499,15 @@ its session ended or was compacted mid-run.
 Used both after `APPROVE` and for `/factory approve <job-id>` on a job. Follow `PROFILE`
 wherever it says something more specific than this section.
 
-1. Set `SHA` to `git -C <WORKTREE> rev-parse HEAD`. If the approver approved, `SHA` must
-   equal the `Reviewed-SHA:` line in `decision.md`. If it doesn't, stop and set
-   `needs-human` with the reason "branch moved after approval".
-2. `git -C <WORKTREE> log --oneline <BASE_REF>..<SHA>` must list only this job's commits.
-   Add its changed paths to the job's `files` and check overlaps once more.
-3. Ship it according to the merge mode in `PROFILE` Settings. The title is the `PR title:`
+1. Bring the base branch in (see **Bringing the base branch in**). It's usually a no-op for
+   a quick job, but it's how a job picks up overlapping work that merged first.
+2. Set `SHA` to `git -C <WORKTREE> rev-parse HEAD`. `SHA` must be the last commit that was
+   accepted: the approver's `Reviewed-SHA:` in `decision.md`, or the sync's result. If it
+   isn't, stop and set `needs-human` with the reason "branch moved after approval".
+3. `git -C <WORKTREE> log --oneline <BASE_REF>..<SHA>` must list only this job's commits
+   (and its sync merges). Add its changed paths to the job's `files` and check overlaps once
+   more.
+4. Ship it according to the merge mode in `PROFILE` Settings. The title is the `PR title:`
    line from `spec.md`. The body is the one-paragraph summary from `spec.md`, its acceptance
    criteria, each round's verdicts, any overlaps, and the decision (or "approved by a human
    with /factory approve"). Add no AI attribution lines.
@@ -475,7 +524,7 @@ wherever it says something more specific than this section.
 If the output shows `[new tag]`, stop and tell the user. A tag rode along, and some repos
 treat a tag push as a release.
 
-4. Set stage `merging` and record the PR or MR URL in `url`. A `local` merge goes straight to
+5. Set stage `merging` and record the PR or MR URL in `url`. A `local` merge goes straight to
    `merged`. A later `/factory` command in this session flips `merging` to `merged` once the
    host has merged.
 
@@ -502,11 +551,14 @@ not ending in `.json`), then `mv` it over `BOARD`, so the dashboard never reads 
 Bump `updated` at the top, and on the run or job you touched.
 
 A run's file holds the run and all of its unit jobs. A standalone job's file holds just that
-job, with an empty `runs`.
+job, with an empty `runs`. `plugin` is this plugin's version (from `.claude-plugin/plugin.json`
+two folders above `SKILL_DIR`), so the dashboard knows what this session will do, such as
+bringing the base branch in before it pushes.
 
 ```json
 {
   "updated": "2026-10-20T14:40:00Z",
+  "plugin": "0.8.0",
   "floor": "/abs/path/to/your/floor",
   "runs": [
     {
