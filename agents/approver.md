@@ -97,7 +97,9 @@ blocking item in `a11y.md` is a gap: WCAG 2.2 AA is part of done. Then, on the r
 `WORKTREE`, go through every unit that isn't `skip`:
 
 - For each acceptance criterion, find where it holds now: the code, and a test that asserts
-  it. Units that were `done` before the run get the same scrutiny as the rest. Their
+  it. A unit that ships on its own PR (`ships: own` in the plan) isn't on the run branch:
+  check it on its own pushed commit (`git -C "$WORKTREE" show <sha>:<path>`,
+  `git -C "$WORKTREE" diff <BASE_REF>...<sha>`), taking the `sha` from the run's board file. Units that were `done` before the run get the same scrutiny as the rest. Their
   evidence was a survey, so verify it.
 - You may run targeted tests to settle a doubt, under the shared lock:
   `lockf -k "$FACTORY/tests.lock" sh -c '<command>'` (`flock` on Linux). Don't run whole

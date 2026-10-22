@@ -57,7 +57,11 @@ The builder commits on the floor, but it never pushes.
   example `feature/0062-…`, where `feature/` triggers a preview). When the last unit is
   accepted, the branch is pushed once and a PR opens, never with auto-merge, so you can
   review the whole ADR on its preview.
-- **After every push**, the shepherd waits for CI on the pushed commit. When this change broke
+- **Units that ship on their own PR** (the plan says so, from the ADR or from this repo's
+  habit) get their own branch and PR, pushed as soon as each is accepted. Units that don't
+  depend on each other and share no files are built side by side, in bays next to the floor.
+- **After every push**, the shepherd waits for CI on the pushed commit, in the background, so
+  the next job starts right away. When this change broke
   something, the builder fixes it, the fix is reviewed, and the factory pushes again (at most 3
   times). Failures that aren't this change's, and anything a reviewer asks that is more than a
   small in-scope fix, come back to you.

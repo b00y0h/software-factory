@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="factory-dashboard-version" content="11">
+<meta name="factory-dashboard-version" content="12">
 <title>Software Factory</title>
 <!--
   The factory's dashboard. The master copy lives in the software-factory plugin
@@ -154,6 +154,9 @@
   .unit.u-queued { border-style: dashed; }
   .unit.u-prior { background: transparent; border-style: dashed; }
   .unit.adopted { box-shadow: inset 0 -2px 0 var(--accent); }
+  /* a unit that ships on a PR of its own, not on the run's branch */
+  .unit.own::after { content: ' ↗'; font-weight: 500; }
+  .bay-tag { font: 600 10px/1.4 var(--mono); padding: 0 5px; border-radius: 5px; border: 1px dashed var(--border); color: var(--muted); margin-left: 6px; }
   .unit.u-skipped { text-decoration: line-through; opacity: .55; border-style: dotted; }
   .run-foot { margin-top: 8px; font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
   .run-foot .alert { color: var(--alert); font-weight: 600; }
@@ -673,7 +676,7 @@
         `</div>`;
     }
     return `<article class="card${color ? ' tagged' : ''}" style="${color}" tabindex="0" role="button" data-job="${esc(job.id)}" aria-label="${esc((job.title || job.id) + ', ' + stateLine(job))}">
-      <div class="card-top"><span class="card-id">${job.unit ? `<span class="unit-tag${color ? ' tagged' : ''}" title="${esc('unit of ' + (job.run || 'a run'))}">${esc(adr ? adr + ' · ' + job.unit : job.unit)}</span>` : (job.run ? '' : '<span class="unit-tag solo" title="a one-off job, not part of an ADR">one-off</span>')}<span class="job-id">${esc(job.id)}</span></span>${working ? '<span class="working" title="an agent is working"></span>' : badge}</div>
+      <div class="card-top"><span class="card-id">${job.unit ? `<span class="unit-tag${color ? ' tagged' : ''}" title="${esc('unit of ' + (job.run || 'a run'))}">${esc(adr ? adr + ' · ' + job.unit : job.unit)}</span>` : (job.run ? '' : '<span class="unit-tag solo" title="a one-off job, not part of an ADR">one-off</span>')}<span class="job-id">${esc(job.id)}</span>${job.bay ? `<span class="bay-tag" title="${esc('building in a bay, beside the floor: ' + job.bay)}">bay</span>` : ''}</span>${working ? '<span class="working" title="an agent is working"></span>' : badge}</div>
       <div class="card-title">${esc(job.title || job.id)}</div>
       <div class="state${job.stage === 'needs-human' ? ' alert' : ''}">${esc(stateLine(job))}</div>
       ${rounds.length ? `<div class="rounds">${rounds.map((r) => chipsRow(job, r)).join('')}</div>` : ''}
@@ -799,13 +802,17 @@
     const chips = units.map((u, i) => {
       const s = statuses[i];
       const how = u.prior ? ' · done before this run: ' + u.prior : u.adopted ? ' · adopted from ' + u.adopted : '';
-      const tip = `${u.unit}${u.title ? ': ' + u.title : ''} · ${s}${how}${u.reason ? ' · ' + u.reason : ''}`;
-      const cls = `unit u-${s}${u.prior ? ' u-prior' : ''}${u.adopted ? ' adopted' : ''}`;
+      const ships = u.ships === 'own' ? ` · ships on its own ${prWord()}${u.branch ? ' (' + u.branch + ')' : ''}` : '';
+      const needs = Array.isArray(u.depends) && u.depends.length ? ' · after ' + u.depends.join(', ') : '';
+      const tip = `${u.unit}${u.title ? ': ' + u.title : ''} · ${s}${how}${ships}${needs}${u.reason ? ' · ' + u.reason : ''}`;
+      const cls = `unit u-${s}${u.prior ? ' u-prior' : ''}${u.adopted ? ' adopted' : ''}${u.ships === 'own' ? ' own' : ''}`;
       return u.job
         ? `<button type="button" class="${cls}" data-open-job="${esc(u.job)}" title="${esc(tip)}" aria-label="${esc(tip)}">${esc(u.unit)}</button>`
         : `<span class="${cls}" title="${esc(tip)}" aria-label="${esc(tip)}">${esc(u.unit)}</span>`;
     }).join('');
     const prior = units.filter((u) => u.prior).length;
+    const side = statuses.filter((st) => st === 'active').length;
+    const own = units.filter((u) => u.ships === 'own' && u.status !== 'skipped').length;
     const completion = { checking: '<span>checking the ADR is complete…</span>', complete: '<span class="done">✓ ADR complete</span>',
       gaps: '<span class="alert">completion check found gaps</span>' }[run.completion] || '';
     const url = run.url && /^https?:\/\//i.test(run.url) ? `<a href="${esc(run.url)}" target="_blank" rel="noopener">${prWord()}</a>` : '';
@@ -822,7 +829,7 @@
       </div>
       <div class="progress" aria-hidden="true"><i style="width:${pct}%"></i></div>
       <div class="units">${chips}</div>
-      <div class="run-foot"><span>${done} of ${buildable} units done${prior ? ` (${prior} before this run)` : ''}${skipped ? ` · ${skipped} skipped` : ''}</span>${run.continuedFrom ? `<span>continuing ${esc(run.continuedFrom)}</span>` : ''}${run.floor ? `<span title="${esc(run.floor)}">floor: ${esc(floorName(run.floor))}</span>` : ''}${completion}${run.reason ? `<span class="alert">${esc(run.reason)}</span>` : ''}${url}</div>
+      <div class="run-foot"><span>${done} of ${buildable} units done${prior ? ` (${prior} before this run)` : ''}${skipped ? ` · ${skipped} skipped` : ''}${side > 1 ? ` · ${side} building side by side` : ''}${own ? ` · ${own} on ${prWord()}s of their own ↗` : ''}</span>${run.continuedFrom ? `<span>continuing ${esc(run.continuedFrom)}</span>` : ''}${run.floor ? `<span title="${esc(run.floor)}">floor: ${esc(floorName(run.floor))}</span>` : ''}${completion}${run.reason ? `<span class="alert">${esc(run.reason)}</span>` : ''}${url}</div>
       ${overlapHtml(run.id)}
       ${ask ? `<div class="cmds"><div class="cmd"><span>${esc(cmd)}</span><button class="copy" type="button" data-copy="${esc(cmd)}">Copy</button></div></div>` : ''}
     </article>`;
@@ -1108,8 +1115,8 @@
           { unit: 'U0', title: 'Policy fields and resolvers', status: 'done', job: '0007-u0-policy-fields' },
           { unit: 'U1', title: 'Limiter on the submit endpoint', status: 'active', job: '0007-u1-submit-limiter' },
           { unit: 'U2', title: 'Edge rule', status: 'skipped', reason: 'lives in the infra repo' },
-          { unit: 'U3', title: 'Dashboard limits card', status: 'queued' },
-          { unit: 'U4', title: 'Operator runbook', status: 'queued' },
+          { unit: 'U3', title: 'Dashboard limits card', status: 'active', job: '0007-u3-limits-card', depends: ['U0'], ships: 'own', branch: 'feature/0007-limits-card' },
+          { unit: 'U4', title: 'Operator runbook', status: 'queued', depends: ['U1', 'U3'] },
         ],
       }, {
         id: '0009-consent-banner-v2', title: 'ADR-0009 Consent banner v2 (sample)', branch: 'feature/0009-consent-banner-v2',
@@ -1127,6 +1134,8 @@
         unitJob('0007-visitor-rate-limits', 'U1', 'submit-limiter', 'Limiter on the submit endpoint', { stage: 'review', round: 1,
           reviews: { security: 'pending', ux: 'PASS', ui: 'PASS', code: 'pending' } }),
         unitJob('0009-consent-banner-v2', 'U1', 'banner-categories', 'Banner categories', { stage: 'build' }),
+        unitJob('0007-visitor-rate-limits', 'U3', 'limits-card', 'Dashboard limits card', { stage: 'build', ships: 'own',
+          branch: 'feature/0007-limits-card', bay: '/work/sample/.claude/worktrees/agent-a1b2' }),
         unitJob('0003-sitemap-freshness', 'U1', 'sitemap-writer', 'Sitemap writer', { stage: 'done', round: 1, reviews: all('PASS'), decision: 'APPROVE', updated: at(610) }),
         job('001', 'sitemap-lastmod', 'Add lastmod to tenant sitemaps', { stage: 'merged', round: 1, reviews: all('PASS'), decision: 'APPROVE', updated: at(140),
           ci: { round: 1, status: 'green', fixes: 0 } }),
@@ -1170,18 +1179,29 @@
       }
       if (run.stage !== 'running') continue;
       const statuses = run.units.map(unitStatus);
-      if (statuses.includes('active') || statuses.includes('paused')) continue;
-      const next = run.units.find((u, i) => statuses[i] === 'queued');
-      run.updated = now;
-      if (!next) {
+      if (statuses.includes('paused')) continue;
+      // A queued unit is ready once the units it depends on are done (no `depends`: every
+      // earlier unit). Ready units start side by side, the extra ones in bays, up to three at once.
+      const doneIds = new Set(run.units.filter((u, i) => statuses[i] === 'done' || statuses[i] === 'skipped').map((u) => u.unit));
+      const ready = run.units.filter((u, i) => statuses[i] === 'queued' &&
+        (Array.isArray(u.depends) ? u.depends : run.units.slice(0, i).map((x) => x.unit)).every((d) => doneIds.has(d)));
+      let busy = statuses.filter((st) => st === 'active').length;
+      if (!ready.length) {
+        if (busy || statuses.includes('queued')) continue;
+        run.updated = now;
         // the completion check runs before the push
         if (run.completion !== 'complete') { run.completion = run.completion === 'checking' ? 'complete' : 'checking'; continue; }
         run.stage = 'pushed'; run.ci = { round: 1, status: 'pending', fixes: 0 }; continue;
       }
-      const id = `${run.id.split('-')[0]}-${next.unit.toLowerCase()}-${slugOf(next.title, 2)}`;
-      next.job = id; next.status = 'active';
-      board.jobs.push({ id, run: run.id, unit: next.unit, title: next.title, branch: run.branch, stage: 'spec', round: 0, maxRound: 2,
-        reviews: pendingReviews(next.title), history: [], started: now, updated: now });
+      for (const next of ready) {
+        if (busy >= 3) break;
+        const id = `${run.id.split('-')[0]}-${next.unit.toLowerCase()}-${slugOf(next.title, 2)}`;
+        next.job = id; next.status = 'active'; run.updated = now;
+        board.jobs.push({ id, run: run.id, unit: next.unit, title: next.title, branch: next.branch || run.branch, ships: next.ships || 'run',
+          bay: busy ? `/work/sample/.claude/worktrees/agent-${slugOf(next.title, 1)}` : null,
+          stage: 'spec', round: 0, maxRound: 2, reviews: pendingReviews(next.title), history: [], started: now, updated: now });
+        busy++;
+      }
     }
   }
   function demoStep() {
@@ -1216,7 +1236,9 @@
         else if (j.round < j.maxRound) { j.history.push({ round: j.round, reviews: { ...j.reviews } }); j.stage = 'build'; }
         else { j.stage = 'needs-human'; j.reason = 'Review rounds used up.'; }
       } else if (j.stage === 'approval') {
-        if (j.run) { j.decision = 'APPROVE'; j.stage = 'done'; }
+        // a unit that ships on its own PR is pushed and shepherded like a job; the others are accepted onto the run branch
+        if (j.run && j.ships === 'own') { j.decision = 'APPROVE'; j.stage = 'merging'; j.ci = { round: 1, status: 'pending', fixes: 0 }; }
+        else if (j.run) { j.decision = 'APPROVE'; j.stage = 'done'; }
         else if (hash(j.id) % 100 < 85) { j.decision = 'APPROVE'; j.stage = 'merging'; j.ci = { round: 1, status: 'pending', fixes: 0 }; }
         else { j.decision = 'ESCALATE'; j.stage = 'needs-human'; j.reason = 'The diff adds a dependency, so a human should look.'; }
       } else if (j.stage === 'merging') {

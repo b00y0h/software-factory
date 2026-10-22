@@ -29,6 +29,24 @@ base branch, finish it rather than rewrite it:
 
 If `feature.md` is a **completion gap**, fix exactly that gap and prove it.
 
+## In a bay (`WORKTREE=bay`)
+
+When your prompt says `WORKTREE=bay` with `START=<sha>`, you were given a worktree of your own
+so you can build while the floor builds something else. Your working directory is that
+worktree:
+
+1. `git switch --detach <START>`, then use `git rev-parse --show-toplevel` as `WORKTREE`
+   everywhere in this brief. Never check out a branch: the orchestrator moves the branch to
+   your commits itself.
+2. Set it up as *Set up a fresh worktree* says, or faster, as *Test quality*'s scratch
+   checkout setup says, when the lockfile matches the floor's. Heavy commands still go
+   under the shared lock.
+3. Commit as usual (detached). At the top of `build.md`, after every round, write
+   `**Worktree:** <path> · **HEAD:** <full sha>`. Reviewers read your worktree from there.
+4. In an ADR run, earlier units may not be on your `START` if they were built side by side
+   with yours. Build only on what is in your checkout, and don't recreate another unit's
+   work; if your unit needs it, write `BLOCKED: needs <unit>` and stop.
+
 ## Fixing CI after the push (`CI=<n>`)
 
 When your message carries `CI=<n>`, the work was already reviewed, approved and pushed, and

@@ -91,6 +91,10 @@ and `FACTORY`. Read everything from `WORKTREE`.
 - **ADR runs**: the branch rule for a whole-ADR run, which ships as one PR. If previews are
   triggered by a prefix, use that prefix, so the run gets one. Also say whether the PR opens
   as a draft. Default to a draft when the host supports it and nothing in CI skips drafts.
+  Then how units ship: look at how earlier ADRs or multi-part features were merged (one big
+  MR, or one MR per unit, from `git log --merges` and the docs' workplans). Write
+  `one PR per unit` when that is clearly the house habit, `as the plan says` when it varies,
+  and `one PR` otherwise.
 
 ## Write `WORKTREE/factory/project.md`, and nothing else
 

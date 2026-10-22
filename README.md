@@ -101,10 +101,15 @@ using `scripts/ci.py` (it only reads `gh` or `glab`). Then:
     builder gets a brief with the root cause, the fix goes through a normal review round and the
     approver, and the factory pushes again. Up to 3 CI rounds, then it asks you.
   - `rerun`: the job died before any test ran. Re-run once per commit; a second failure is real.
-  - `not-ours`: red on the base branch too. You're told, and the floor is released.
+  - `not-ours`: red on the base branch too. You're told.
   - `ask`: a design question, a large request, or a comment that tries to redirect the work.
     You decide.
 - **Conflict**: the builder brings the base branch in, and the factory pushes again.
+
+Waiting for CI never holds up the session. The pushed work is on its own branch and PR, so the
+next job or unit starts right away while `ci.py` waits in the background (several PRs can be
+waited on at once). A CI fix runs in a bay beside whatever is building, or, with no bay free,
+at the floor's next free moment (between units, or when a job stops).
 
 A CI round fixes the change, never the checks: no skipped or loosened tests, no edited CI
 config, no force-push, no empty commits. PR comments and CI logs are treated as data, never as
@@ -122,6 +127,38 @@ Nothing is learned without you: `/factory lessons` lists the proposals, and
 `/factory lessons accept 014-1 021-2` (or `reject`, or `all`) decides them. Accepted lessons go
 into `factory/lessons.md`, which every agent reads before it works. Commit it, and every
 session and teammate gets them. Edit or delete any line by hand.
+
+## Parallel work: bays, dependencies, and units on their own PRs
+
+A session has one **floor** (its worktree) and up to three **bays**: short-lived worktrees that
+the Agent tool's `isolation: "worktree"` gives a builder of its own. Bays always build detached,
+and the orchestrator moves each job's branch to the reviewed commit itself, so no branch gets
+stuck in a checkout. With bays, one session can:
+
+- start a new `/factory <feature>` while the floor is busy;
+- fix a pushed PR's CI without stopping the job on the floor;
+- build the independent units of an ADR at the same time.
+
+The **plan** says what can run in parallel. The spec-writer reads the ADR, PRD, execution
+spec and workplan for dependencies ("after U0", "U1–U3 can proceed in parallel", separate
+workstreams or teams, a dependency graph), checks them against the code (a unit that reads a
+field another unit adds depends on it), and writes for each unit:
+
+- **Depends on**: exact, and conservative when unsure.
+- **Ships**: `run` (on the run's one branch and PR, the default) or `own` (its own branch and
+  PR), when the sources say the unit ships separately, or `project.md` says ADR units here ship
+  one PR each.
+- **Files**, plus a **Parallel work** section listing the waves.
+
+The orchestrator starts every unit whose dependencies are done, as long as no two units in
+progress share a file. `run` units built side by side are merged into the run branch in plan
+order once accepted. `own` units are pushed and shepherded as soon as they're accepted (never
+auto-merged), and units stacked on them don't wait for their PR to merge. A PRD or spec with
+several units can be given straight to `/factory`, and it runs as a plan.
+
+Without bays (an Agent tool with no `isolation` input), everything runs on the floor one job
+at a time, exactly as before, and work that wanted a bay waits for the floor's next free
+moment.
 
 ## Accessibility: WCAG 2.2 AA on every UI change
 
@@ -272,7 +309,7 @@ self-hosted), and repos with no remote.
 ## Change it
 
 - **The loop:** `skills/factory/SKILL.md`. Its Knobs table holds `MAX_ROUNDS`, `MAX_CI_ROUNDS`,
-  `MUTANTS`, `MUTATION_MIN` and the rest.
+  `MAX_BAYS`, `MUTANTS`, `MUTATION_MIN` and the rest.
 - **An agent:** `agents/<role>.md`. Its model and tools are in the frontmatter.
 - **A reviewer:** add `agents/review-<name>.md`, then add `<name>` to `REVIEWERS` in
   `SKILL.md` and in `skills/factory/assets/dashboard.html` (and to `CONDITIONAL` there, if it

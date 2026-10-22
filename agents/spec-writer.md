@@ -31,6 +31,10 @@ writes exactly one file:
    reads like its author had the code open.
 5. **No secrets.** Name env vars, never their values.
 
+**In a bay** (`WORKTREE=bay` and `START=<sha>` in your prompt), your checkout is your own
+working directory. First run `git switch --detach <START>` there, then use
+`git rev-parse --show-toplevel` as `WORKTREE` everywhere below.
+
 ## Always read
 
 - `WORKTREE/factory/project.md`: this repo's stack, its rules, its PR title format, and its
@@ -90,9 +94,15 @@ Read `JOB_DIR/feature.md`, which names the unit and its source section, then rea
 source and the ADR it implements. The unit is already specified, and your job is to carry it
 into the factory **without rewording it**. Follow **Adopting a spec**.
 
-Use the header above (its **Risk** line included), with **Branch:** set to the run's branch (`BRANCH` in your prompt)
-and **PR title:** set to the unit's own one-line summary (the run has one PR; this title only
-labels the unit). Add `**Unit:** <id> of <ADR> · **Source:** <path>#<section>`.
+Use the header above (its **Risk** line included), and add
+`**Unit:** <id> of <ADR> · **Source:** <path>#<section> · **Ships:** <run or own>`, copying
+**Ships** from the plan:
+- **Ships `run`:** **Branch:** is the run's branch (`BRANCH` in your prompt), and
+  **PR title:** is the unit's own one-line summary (the run has one PR; this title only labels
+  the unit).
+- **Ships `own`:** the unit gets a PR of its own, so name its **Branch:** by `project.md`'s
+  Branch names rule, as for a one-off job (mention the ADR number in it where the rule
+  allows), and write a real **PR title:** in the repo's format.
 
 ## Adopting a spec
 
@@ -123,8 +133,9 @@ original criteria it relates to copied word for word.
 
 ## MODE=plan: plan an ADR run
 
-Your prompt gives you `ADR` (a file or folder) and `RUN_DIR`. Read the ADR and everything it
-links that specifies its work: execution plan, workplan, specs. **Then find out how much of it
+Your prompt gives you `ADR` (a file or folder) and `RUN_DIR`. `ADR` may also be a PRD, an
+execution spec or a workplan: any planning document with more than one unit of work. Read it
+and everything it links that specifies its work: execution plan, workplan, specs. **Then find out how much of it
 is already done** (see *Survey the work already done*), and write `RUN_DIR/plan.md`. If
 `plan.md` already exists from an earlier run of this ADR, you are refreshing it: keep its unit
 ids and order unless the ADR itself changed, and update each unit's status from a fresh
@@ -139,13 +150,27 @@ survey.
 **PR title:** <one title for the whole run, in project.md's format>
 
 ## Units, in build order
-| # | Unit | Title | Decision | Depends on | Source | Found |
-|---|---|---|---|---|---|---|
-| 1 | U0 | Tenant policy fields | done: merged in !1144 (abc1234) | none | execution-plan.md#u0 | all 4 ACs visible on main |
-| 2 | U1 | Profiling switch | adopt: feat/0062-profiling-switch | U0 | execution-plan.md#u1 | open MR !1150, 3 of 5 ACs |
-| 3 | U2 | Retention cap | build | U0 | execution-plan.md#u2 | `retention.ts` has the cap; no runbook yet |
-| 4 | U10 | Ingest tag attribute | skip: lives in the meridian-ingest repo | none | execution-plan.md#u10 | |
-| 5 | WP | Update the workplan | build | all | workplan.md#status | |
+| # | Unit | Title | Decision | Depends on | Ships | Source | Found |
+|---|---|---|---|---|---|---|---|
+| 1 | U0 | Tenant policy fields | done: merged in !1144 (abc1234) | none | run | execution-plan.md#u0 | all 4 ACs visible on main |
+| 2 | U1 | Profiling switch | adopt: feat/0062-profiling-switch | U0 | run | execution-plan.md#u1 | open MR !1150, 3 of 5 ACs |
+| 3 | U2 | Retention cap | build | U0 | own | execution-plan.md#u2 | `retention.ts` has the cap; no runbook yet |
+| 4 | U3 | Consent copy | build | U0 | run | execution-plan.md#u3 | nothing yet |
+| 5 | U10 | Ingest tag attribute | skip: lives in the meridian-ingest repo | none | run | execution-plan.md#u10 | |
+| 6 | WP | Update the workplan | build | all | run | workplan.md#status | |
+
+## Parallel work
+<the waves this plan allows: units in one wave depend on nothing in a later wave and share no
+files with each other, so the factory may build them side by side. One line each, with the
+reason, and the source that says so.>
+- Wave 1: U1, U2, U3 (each needs only U0; no shared files; the execution plan says "U1–U3 can
+  proceed in parallel once U0 lands")
+- Wave 2: WP
+
+## Files by unit
+<every `build` and `adopt` unit's repo paths, from its file table, so the factory can tell
+which units would collide if built at once.>
+- U1: `apps/payload-core/src/globals/PartnerConfig.ts`, `apps/site-core/src/lib/consentConfig.ts`
 
 ## Rollout gates
 <conditions for releasing or launching, not for building: things that must be deployed,
@@ -201,6 +226,31 @@ Then decide each unit:
 - **ask: <question>**: buildable here, but it needs an input only a human has, such as a
   branch to start from or a choice the ADR leaves open that changes behavior. The run
   pauses at this unit until you're given an answer.
+
+### Dependencies, parallel work, and how each unit ships
+
+The factory builds units side by side when it can, so **Depends on** must be exact: a unit
+depends on another only when it needs that unit's code, schema, types, config or data at
+build or test time. Read the sources for what they say, in this order of trust:
+
+1. **What the documents say outright.** An execution plan's or PRD's dependency column,
+   "blocked by" or "after U0" notes, a sequencing section, a dependency graph, or lines like
+   "U1–U3 can proceed in parallel", "independent", "separate workstream", or work split
+   between teams or people. A workplan's status table may also show units that were built
+   in parallel before.
+2. **What the code shows.** A unit that reads a field, type, table, route or flag another
+   unit adds depends on it. Two units that touch the same file can't be built at once (the
+   factory checks **Files by unit** for that), but that alone isn't a dependency.
+3. **When in doubt, depend.** A missing dependency builds a unit on code that isn't there
+   yet; an extra one only costs time. Say under **Why this order** where you inferred one.
+
+**Ships** is `own` when the sources say the unit ships separately: its own PR or MR, its
+own release or deploy window, a different reviewer or team, a flag-guarded change meant to
+land early, or a fix wanted before the rest of the ADR. It is also `own` when `project.md`'s
+ADR runs setting says units ship one PR each. Otherwise it is `run`: the whole ADR ships as
+one PR, which is the default. A `WP` unit always ships `run` and depends on `all`. An `adopt`
+unit whose branch already has its own open PR may ship `own` to keep that PR; say so in
+**Found**.
 
 Order the build units so every unit comes after the ones it needs at build time. Respect the
 plan's own sequencing constraints, and say where you departed from its order and why.
