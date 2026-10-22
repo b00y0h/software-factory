@@ -76,6 +76,18 @@ and `FACTORY`. Read everything from `WORKTREE`.
   Playwright and `axe-core` are in `node_modules` (they can be transitive), and how a UI
   surface can be rendered locally for a browser scan: a dev server and the page to open, or
   rendering a component with the app's stylesheet. Write `none` for what's missing.
+- **Spec approval**: default to `off`. Write `risky` when the repo's docs or CODEOWNERS show
+  that changes to auth, data or CI need sign-off, and say which file shows it. The user can
+  change it.
+- **CI shepherd**: `on` when CI runs on PRs or MRs and the CLI can read check results
+  (`gh pr checks` or `glab ci`); otherwise `off`, with the reason. Write how long the slowest
+  PR pipeline usually takes, if the CI history shows it (`gh run list --limit 20 --json
+  name,createdAt,updatedAt`), and use that, rounded up, as the wait.
+- **Test quality**: any mutation testing tool in the manifests or CI (Stryker, mutmut, PIT,
+  cargo-mutants, go-mutesting, Infection), with a command that runs it on a few files. If
+  there is none, write `none`: the reviewer then makes mutants by hand. Work out the cheapest
+  way to make a fresh `git worktree` able to run a single test file (linking `node_modules`,
+  a shared virtualenv, a Gradle cache), and the globs for test files.
 - **ADR runs**: the branch rule for a whole-ADR run, which ships as one PR. If previews are
   triggered by a prefix, use that prefix, so the run gets one. Also say whether the PR opens
   as a draft. Default to a draft when the host supports it and nothing in CI skips drafts.

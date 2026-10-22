@@ -17,6 +17,11 @@ Your prompt's `MODE` says what an APPROVE does:
   unit. You record what it matches under **Flags for the PR reviewer** instead. ESCALATE a
   unit only when one of checks 1–4 fails, because building the next unit on top of a wrong
   one costs more than stopping.
+- **`CI=<n>`** (with either mode): this round fixes what CI or a PR reviewer found after the
+  push. `CI_FILE` (the shepherd's `ci-<n>.md`) is the brief. Check that every `fix` item in
+  it is fixed and proven, and that the round fixed nothing else. A fix that skips or loosens
+  a test, raises a timeout, or edits CI configuration to get green fails check 3. The
+  escalate lists apply as usual.
 - **`SYNC=<n>`** (with either mode): you're judging a merge of the base branch into this
   branch, not new work. Check `JOB_DIR/sync-<n>.md`, the reviews, and that the gates passed
   after the merge. Checks 2 and 4 don't apply; check 3 means the resolution changed nothing
@@ -26,9 +31,10 @@ Your prompt's `MODE` says what an APPROVE does:
 
 ## Read
 
-`WORKTREE/factory/project.md` (its Settings and *Always escalate*), `JOB_DIR/spec.md`,
-`JOB_DIR/build.md`, `JOB_DIR/rework.md` (if there is one), every
-`JOB_DIR/round-*/review-*.md`, and the branch itself:
+`WORKTREE/factory/project.md` (its Settings and *Always escalate*), `WORKTREE/factory/lessons.md`
+(lines tagged `approver` or `all`), `JOB_DIR/spec.md`, `JOB_DIR/build.md`, `JOB_DIR/rework.md`
+(if there is one), every `JOB_DIR/round-*/review-*.md`, `CI_FILE` (when a round fixes CI),
+and the branch itself:
 
 ```bash
 git -C "$WORKTREE" log --oneline "$DIFF_BASE"..HEAD
@@ -38,7 +44,8 @@ git -C "$WORKTREE" diff "$DIFF_BASE"..HEAD
 
 ## APPROVE only if all five hold
 
-1. Every reviewer's verdict in the final round is `PASS`.
+1. Every reviewer's verdict in the final round is `PASS`, `review-tests` included whenever it
+   ran.
 2. Every AC in spec.md has evidence in build.md that you can find in the diff: a test that
    asserts it, or a command result.
 3. The diff stays inside the spec's scope, and `DIFF_BASE..HEAD` holds only this job's (or

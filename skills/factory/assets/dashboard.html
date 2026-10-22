@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="factory-dashboard-version" content="10">
+<meta name="factory-dashboard-version" content="11">
 <title>Software Factory</title>
 <!--
   The factory's dashboard. The master copy lives in the software-factory plugin
@@ -227,10 +227,11 @@
 
   /* ---------- review rounds: a row of reviewer chips per round ---------- */
   .rounds { margin-top: 9px; display: flex; flex-direction: column; gap: 5px; }
-  .round { display: flex; align-items: center; gap: 4px; }
+  /* up to six reviewer chips: they wrap to a second line on a narrow card rather than clip */
+  .round { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; position: relative; padding-left: 22px; }
   .round.past { opacity: .62; }
-  .round-n { font-family: var(--mono); font-size: 10.5px; color: var(--faint); width: 18px; flex: none; }
-  .round .chip { flex: 1 1 0; min-width: 0; justify-content: center; overflow: hidden; padding: 2px 3px; }
+  .round-n { font-family: var(--mono); font-size: 10.5px; color: var(--faint); width: 18px; position: absolute; left: 0; top: 3px; }
+  .round .chip { flex: 1 1 auto; min-width: 48px; justify-content: center; padding: 2px 3px; }
   .chip {
     display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; font-weight: 600;
     padding: 2px 6px; border-radius: 6px; border: 1px solid transparent; white-space: nowrap;
@@ -329,7 +330,7 @@
       </div>
       <div>
         <h1>Software factory</h1>
-        <p class="sub" id="sub">feature → spec → build → 4 reviews → approve → merge</p>
+        <p class="sub" id="sub">feature → spec → build → reviews → approve → merge → CI green</p>
       </div>
     </div>
     <div class="status">
@@ -392,16 +393,36 @@
     { key: 'backlog',  name: 'Backlog',       who: [['backlog.md']] },
     { key: 'spec',     name: 'Spec',          who: [['spec-writer', 'opus']] },
     { key: 'build',    name: 'Build',         who: [['builder', 'opus']] },
-    { key: 'review',   name: 'Review',        who: [['security', 'opus'], ['ux · ui · code', 'sonnet'], ['a11y on UI changes', 'opus']] },
+    { key: 'review',   name: 'Review',        who: [['security', 'opus'], ['ux · ui · code', 'sonnet'], ['tests on code changes', 'opus'], ['a11y on UI changes', 'opus']] },
     { key: 'approval', name: 'Approve',       who: [['approver', 'opus']] },
     { key: 'done',     name: 'Done',          who: null },   // filled from board.project.merge
   ];
   // `done` is an ADR unit accepted onto its run's branch; jobs end in merging/merged.
   const COLUMN_OF = { spec: 'spec', build: 'build', review: 'review', approval: 'approval', merging: 'done', merged: 'done', done: 'done' };
   const ACTIVE = new Set(['spec', 'build', 'review', 'approval']);
-  // a11y (WCAG 2.2 AA) only runs when a change touches UI; a round without it shows no a11y chip
-  const REVIEWERS = [['security', 'sec'], ['ux', 'ux'], ['ui', 'ui'], ['code', 'code'], ['a11y', 'a11y']];
-  const ranIn = (reviews, k) => k !== 'a11y' || (reviews && reviews.a11y != null && reviews.a11y !== 'n/a');
+  // tests (red checks and mutants) runs when a change touches code, and a11y (WCAG 2.2 AA) when it
+  // touches UI; a round without one shows no chip for it
+  const REVIEWERS = [['security', 'sec'], ['ux', 'ux'], ['ui', 'ui'], ['code', 'code'], ['tests', 'tests'], ['a11y', 'a11y']];
+  const CONDITIONAL = new Set(['tests', 'a11y']);
+  const ranIn = (reviews, k) => !CONDITIONAL.has(k) || (reviews && reviews[k] != null && reviews[k] !== 'n/a');
+  const REVIEWER_NAME = { a11y: 'a11y (WCAG 2.2 AA)', tests: 'tests (red check and mutants)' };
+  const REVIEW_TITLE = { a11y: 'accessibility', tests: 'test quality' };
+  // what the shepherd says about a pushed PR's CI
+  function ciText(ci) {
+    if (!ci || !ci.status) return '';
+    const fixes = ci.fixes ? ` · ${ci.fixes} fix${ci.fixes === 1 ? '' : 'es'}` : '';
+    switch (ci.status) {
+      case 'pending': return `CI running${fixes}`;
+      case 'fixing': return `CI red · fixing (round ${ci.fixes || 1})`;
+      case 'green': return `CI green${fixes}`;
+      case 'blocked': return 'CI red · not this change';
+      case 'stale': return 'someone else pushed · not shepherding';
+      case 'none': return 'no CI on this commit';
+      case 'error': return 'CI unreadable';
+      default: return '';
+    }
+  }
+  const ciTone = (ci) => (!ci ? '' : ci.status === 'green' ? 'pass' : ['fixing', 'blocked', 'error'].includes(ci.status) ? 'alert' : 'accent');
   const POLL_MS = 2000;
 
   const $ = (id) => document.getElementById(id);
@@ -452,12 +473,17 @@
         return `round ${r} · ${n} of ${ran.length} reviews in`;
       }
       case 'approval': return 'deciding';
-      case 'merging': return board.project?.merge === 'open-only'
-        ? `${prWord()} open · yours to merge`
-        : `${prWord()} open · merges when checks pass`;
+      case 'merging': {
+        const ci = ciText(job.ci);
+        if (job.ci?.status === 'pending' || job.ci?.status === 'fixing') return `${prWord()} open · ${ci}`;
+        return (board.project?.merge === 'open-only'
+          ? `${prWord()} open · yours to merge`
+          : `${prWord()} open · merges when checks pass`) + (ci ? ` · ${ci}` : '');
+      }
       case 'merged': return 'merged';
       case 'done': return 'accepted onto the run branch';
-      case 'needs-human': return 'waiting on you';
+      case 'needs-human': return job.gate === 'spec' ? 'spec waiting for your approval'
+        : job.gate === 'ci' ? 'CI needs you' : 'waiting on you';
       default: return job.stage || '';
     }
   }
@@ -564,7 +590,7 @@
         seenVerdicts.set(key, v);
         const live = v === 'pending' && job.stage === 'review' && !r.past;
         const icon = v === 'pass' ? '✓' : v === 'changes' ? '↺' : '·';
-        const label = `${k === 'a11y' ? 'a11y (WCAG 2.2 AA)' : k}: ${v === 'pending' ? 'pending' : v.toUpperCase()}`;
+        const label = `${REVIEWER_NAME[k] || k}: ${v === 'pending' ? 'pending' : v.toUpperCase()}`;
         return `<span class="chip ${v}${live ? ' live' : ''}${landed ? ' landed' : ''}" title="${esc(label)}" aria-label="${esc(label)}">${icon} ${short}</span>`;
       }).join('') + '</div>';
   }
@@ -628,18 +654,19 @@
     const rounds = roundsOf(job);
     const color = colorOf(job.run || job.id);
     const adr = job.run ? job.run.split('-')[0] : '';
-    const working = ACTIVE.has(job.stage);
+    const working = ACTIVE.has(job.stage) || job.ci?.status === 'pending';
     let badge = '';
     if (job.stage === 'merged') badge = '<span class="badge pass">merged</span>';
     else if (job.stage === 'done') badge = '<span class="badge pass">accepted</span>';
+    else if (job.stage === 'merging' && job.ci?.status && job.ci.status !== 'green') badge = `<span class="badge ${ciTone(job.ci)}">${esc(job.ci.status === 'fixing' ? 'CI fixing' : job.ci.status === 'pending' ? 'CI running' : 'CI')}</span>`;
     else if (job.stage === 'merging') badge = `<span class="badge accent">${board.project?.merge === 'open-only' ? prWord() + ' open' : 'auto-merge'}</span>`;
-    else if (job.stage === 'needs-human') badge = `<span class="badge alert">${esc(job.decision === 'ESCALATE' ? 'escalated' : 'held')}</span>`;
+    else if (job.stage === 'needs-human') badge = `<span class="badge alert">${esc(job.gate === 'spec' ? 'spec to approve' : job.gate === 'ci' ? 'CI' : job.decision === 'ESCALATE' ? 'escalated' : 'held')}</span>`;
     const url = job.url || job.mr;
     const mr = url && /^https?:\/\//i.test(url) ? ` · <a href="${esc(url)}" target="_blank" rel="noopener" data-stop>${prWord()}</a>` : '';
     let extra = '';
     if (inStrip) {
       const approve = `/factory approve ${job.id}`;
-      const rework = `/factory rework ${job.id} "<note>"`;
+      const rework = `/factory rework ${job.id} "<note>"`;   // at the spec gate, the note revises the spec
       extra = (job.reason ? `<p class="reason">${esc(job.reason)}</p>` : '') +
         `<div class="cmds">` +
         [approve, rework].map((c) => `<div class="cmd"><span>${esc(c)}</span><button class="copy" type="button" data-copy="${esc(c)}" data-stop>Copy</button></div>`).join('') +
@@ -766,8 +793,9 @@
     const skipped = statuses.length - buildable;
     const pct = buildable ? Math.round((done / buildable) * 100) : 0;
     const stage = run.stage || 'running';
-    const label = stage === 'pushed' ? `${prWord()} open · preview` : stage;
-    const badge = stage === 'paused' ? 'alert' : stage === 'pushed' || stage === 'merged' ? 'pass' : 'accent';
+    const ci = ciText(run.ci);
+    const label = stage === 'pushed' ? `${prWord()} open · preview${ci ? ' · ' + ci : ''}` : stage === 'paused' && run.gate === 'plan' ? 'plan to approve' : stage;
+    const badge = stage === 'paused' ? 'alert' : stage === 'pushed' && run.ci && run.ci.status !== 'green' ? ciTone(run.ci) : stage === 'pushed' || stage === 'merged' ? 'pass' : 'accent';
     const chips = units.map((u, i) => {
       const s = statuses[i];
       const how = u.prior ? ' · done before this run: ' + u.prior : u.adopted ? ' · adopted from ' + u.adopted : '';
@@ -781,8 +809,8 @@
     const completion = { checking: '<span>checking the ADR is complete…</span>', complete: '<span class="done">✓ ADR complete</span>',
       gaps: '<span class="alert">completion check found gaps</span>' }[run.completion] || '';
     const url = run.url && /^https?:\/\//i.test(run.url) ? `<a href="${esc(run.url)}" target="_blank" rel="noopener">${prWord()}</a>` : '';
-    const ask = stage === 'paused' && statuses.includes('ask');
-    const cmd = `/factory continue ${run.id} "<answer>"`;
+    const ask = stage === 'paused' && (statuses.includes('ask') || run.gate === 'plan');
+    const cmd = run.gate === 'plan' ? `/factory continue ${run.id} approve` : `/factory continue ${run.id} "<answer>"`;
     const color = colorOf(run.id);
     return `<article class="run${color ? ' tagged' : ''}${stage === 'paused' ? ' paused' : ''}" style="${color}">
       <div class="run-head">
@@ -820,7 +848,7 @@
     const running = jobs.filter((j) => ACTIVE.has(j.stage)).length;
     $('counts').textContent = `${running} running · ${human.length} need${human.length === 1 ? 's' : ''} you · ${view.history.length} shipped`;
     const name = board.project?.name;
-    $('sub').textContent = (name ? name + ' · ' : '') + 'feature → spec → build → 4 reviews → approve → merge';
+    $('sub').textContent = (name ? name + ' · ' : '') + 'feature → spec → build → reviews → approve → merge → CI green';
     document.title = name ? `${name} · Software Factory` : 'Software Factory';
 
     // needs-human strip
@@ -946,8 +974,9 @@
   function jobFiles(job) {
     const files = [['feature.md', 'Feature'], ['spec.md', 'Spec'], ['build.md', 'Build'], ['rework.md', 'Rework']];
     const maxR = Math.max(job.round || 0, ...(job.history || []).map((h) => h.round || 0));
-    for (let r = 1; r <= maxR; r++) for (const [k, short] of REVIEWERS) files.push([`round-${r}/review-${k}.md`, short, r, `Round ${r} ${k === 'a11y' ? 'accessibility' : k} review`]);
+    for (let r = 1; r <= maxR; r++) for (const [k, short] of REVIEWERS) files.push([`round-${r}/review-${k}.md`, short, r, `Round ${r} ${REVIEW_TITLE[k] || k} review`]);
     files.push(['decision.md', 'Decision']);
+    for (let n = 1; n <= (job.ci?.round || 0); n++) files.push([`ci/ci-${n}.md`, `CI ${n}`, 0, `CI after push ${n}`]);
     return files;
   }
   function openDrawer(id) {
@@ -962,7 +991,8 @@
     if (!run) return;
     const base = `runs/${encodeURIComponent(run.id)}`;
     openDocs({ key: 'run:' + id, meta: `${run.branch || run.id} · ${run.stage || ''}`, title: run.title || run.id,
-      base, files: [['plan.md', 'Run plan'], ['a11y.md', 'Accessibility'], ['completion.md', 'Completion check']], read: (p) => (DEMO ? demoRunFile(run, p) : readFile(base, p)) });
+      base, files: [['plan.md', 'Run plan'], ['a11y.md', 'Accessibility'], ['completion.md', 'Completion check'],
+        ...Array.from({ length: run.ci?.round || 0 }, (_, i) => [`ci/ci-${i + 1}.md`, `CI ${i + 1}`, 0, `CI after push ${i + 1}`])], read: (p) => (DEMO ? demoRunFile(run, p) : readFile(base, p)) });
   }
   async function openDocs({ key, meta, title, base, files, read }) {
     openKey = key;
@@ -997,9 +1027,9 @@
       document.querySelectorAll('#tabs .tab').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.file === String(i))));
       let text = f.text; let head = '';
       const vm = text.match(/^\s*VERDICT:\s*(PASS|CHANGES)\s*\n?/i);
-      const dm = !vm && text.match(/^\s*(APPROVE|ESCALATE)\s*\n?/);
+      const dm = !vm && text.match(/^\s*(APPROVE|ESCALATE|GREEN|FIX|RERUN|WAIT|ASK)\s*\n?/);
       if (vm) { head = `<div class="verdict ${verdictOf(vm[1])}">VERDICT: ${esc(vm[1].toUpperCase())}</div>`; text = text.slice(vm[0].length); }
-      if (dm) { head = `<div class="verdict ${dm[1] === 'APPROVE' ? 'pass' : 'changes'}">${esc(dm[1])}</div>`; text = text.slice(dm[0].length); }
+      if (dm) { head = `<div class="verdict ${dm[1] === 'APPROVE' || dm[1] === 'GREEN' ? 'pass' : 'changes'}">${esc(dm[1])}</div>`; text = text.slice(dm[0].length); }
       $('doc').innerHTML = `<div class="doc-path">${esc(base)}/${esc(f.path)}</div>${head}<div class="md">${md(text)}</div>`;
       $('doc').scrollTop = 0;
     };
@@ -1054,7 +1084,7 @@
   function hash(s) { let h = 2166136261; for (const c of s) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
   function demoSeed() {
     const t = Date.now(); const at = (min) => new Date(t - min * 60000).toISOString();
-    const all = (v, ui = false) => ({ security: v, ux: v, ui: v, code: v, ...(ui ? { a11y: v } : {}) });
+    const all = (v, ui = false) => ({ security: v, ux: v, ui: v, code: v, tests: v, ...(ui ? { a11y: v } : {}) });
     const job = (n, slug, title, extra) => ({ id: `${n}-${slug}`, title, branch: `feature/${slug}`, round: 0, maxRound: 2, reviews: all('pending'), history: [], decision: null, reason: null, url: null, started: at(90), updated: at(5), ...extra });
     // Two ADR runs from two sessions (two floors), sharing a file, plus loose jobs.
     const unitJob = (run, unit, slug, title, extra) => ({ ...job('', '', title, extra), id: `${run.split('-')[0]}-${unit.toLowerCase()}-${slug}`,
@@ -1098,15 +1128,20 @@
           reviews: { security: 'pending', ux: 'PASS', ui: 'PASS', code: 'pending' } }),
         unitJob('0009-consent-banner-v2', 'U1', 'banner-categories', 'Banner categories', { stage: 'build' }),
         unitJob('0003-sitemap-freshness', 'U1', 'sitemap-writer', 'Sitemap writer', { stage: 'done', round: 1, reviews: all('PASS'), decision: 'APPROVE', updated: at(610) }),
-        job('001', 'sitemap-lastmod', 'Add lastmod to tenant sitemaps', { stage: 'merged', round: 1, reviews: all('PASS'), decision: 'APPROVE', updated: at(140) }),
+        job('001', 'sitemap-lastmod', 'Add lastmod to tenant sitemaps', { stage: 'merged', round: 1, reviews: all('PASS'), decision: 'APPROVE', updated: at(140),
+          ci: { round: 1, status: 'green', fixes: 0 } }),
         job('002', 'preview-link-copy', 'Copy button for page preview links', { stage: 'needs-human', round: 2, decision: null,
           reviews: { security: 'PASS', ux: 'CHANGES', ui: 'PASS', code: 'PASS', a11y: 'PASS' },
           history: [{ round: 1, reviews: { security: 'PASS', ux: 'CHANGES', ui: 'CHANGES', code: 'PASS', a11y: 'CHANGES' } }],
           reason: 'Review rounds used up: ux still wants focus to return to the row after copying.', updated: at(25) }),
         job('003', 'rate-limiting', 'Rate-limit the public form submit endpoint', { stage: 'review', round: 2,
-          files: ['apps/api/src/forms/submit.ts'],
-          reviews: { security: 'pending', ux: 'PASS', ui: 'pending', code: 'PASS' },
-          history: [{ round: 1, reviews: { security: 'CHANGES', ux: 'PASS', ui: 'CHANGES', code: 'PASS' } }] }),
+          files: ['apps/api/src/forms/submit.ts'], risk: 'high',
+          reviews: { security: 'pending', ux: 'PASS', ui: 'pending', code: 'PASS', tests: 'pending' },
+          history: [{ round: 1, reviews: { security: 'CHANGES', ux: 'PASS', ui: 'CHANGES', code: 'PASS', tests: 'CHANGES' } }] }),
+        job('007', 'session-cookie-samesite', 'Set SameSite=Lax on the session cookie', { stage: 'needs-human', gate: 'spec', risk: 'high',
+          reason: 'Spec waiting for approval: it touches sessions.', updated: at(4) }),
+        job('008', 'locale-date-format', 'Format report dates in the viewer\'s locale', { stage: 'merging', round: 1, reviews: all('PASS'), decision: 'APPROVE',
+          url: null, ci: { round: 1, status: 'pending', fixes: 0 }, updated: at(2) }),
         job('004', 'media-empty-state', 'Empty state for the Media Library', { stage: 'build' }),
         job('005', 'variant-id-report', 'Show variant_id on the experiment report', { stage: 'spec', updated: at(1) }),
         job('006', 'duplicate-block-shortcut', 'Keyboard shortcut to duplicate a block', { stage: 'approval', round: 1, reviews: all('PASS', true) }),
@@ -1119,14 +1154,20 @@
   let demoIdle = 0;
   // demo jobs whose title sounds like UI get the accessibility check too
   const looksUi = (title) => /card|banner|button|page|panel|tab|hero|row|library|shortcut|empty state/i.test(title || '');
-  const pendingReviews = (title) => ({ security: 'pending', ux: 'pending', ui: 'pending', code: 'pending',
+  const pendingReviews = (title) => ({ security: 'pending', ux: 'pending', ui: 'pending', code: 'pending', tests: 'pending',
     ...(looksUi(title) ? { a11y: 'pending' } : { a11y: 'n/a' }) });
   const slugOf = (t, n) => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').split('-').slice(0, n).join('-');
   // A run starts its next queued unit once the last one is accepted, and pushes after the final one.
   function demoRuns(now) {
     for (const run of board.runs || []) {
       // a pushed run's PR merges a few beats later, and the run moves to Shipped
-      if (run.stage === 'pushed') { run.waited = (run.waited || 0) + 1; if (run.waited > 3) { run.stage = 'merged'; run.updated = now; } continue; }
+      if (run.stage === 'pushed') {
+        // the shepherd watches CI on the pushed commit, then the PR waits on its reviewers and merges
+        run.waited = (run.waited || 0) + 1;
+        if (run.waited === 2) run.ci = { round: 1, status: 'green', fixes: 0 };
+        if (run.waited > 4) { run.stage = 'merged'; run.updated = now; }
+        continue;
+      }
       if (run.stage !== 'running') continue;
       const statuses = run.units.map(unitStatus);
       if (statuses.includes('active') || statuses.includes('paused')) continue;
@@ -1135,7 +1176,7 @@
       if (!next) {
         // the completion check runs before the push
         if (run.completion !== 'complete') { run.completion = run.completion === 'checking' ? 'complete' : 'checking'; continue; }
-        run.stage = 'pushed'; continue;
+        run.stage = 'pushed'; run.ci = { round: 1, status: 'pending', fixes: 0 }; continue;
       }
       const id = `${run.id.split('-')[0]}-${next.unit.toLowerCase()}-${slugOf(next.title, 2)}`;
       next.job = id; next.status = 'active';
@@ -1147,7 +1188,7 @@
     const jobs = board.jobs;
     const now = new Date().toISOString();
     demoRuns(now);
-    const active = jobs.filter((j) => ACTIVE.has(j.stage) || j.stage === 'merging');
+    const active = jobs.filter((j) => ACTIVE.has(j.stage) || j.stage === 'merging' || (j.stage === 'needs-human' && j.gate === 'spec'));
     const runsBusy = (board.runs || []).some((r) => r.stage === 'running' || r.stage === 'pushed');
     if (!active.length && !demoQueue.length && !runsBusy) {
       // Hold the finished board for a few beats, so the pushed run is seen, then start over.
@@ -1163,7 +1204,8 @@
     } else if (active.length) {
       const j = active[demoTick % active.length];
       j.updated = now;
-      if (j.stage === 'spec') j.stage = 'build';
+      if (j.stage === 'needs-human') { j.gate = null; j.reason = null; j.stage = 'build'; }   // a human approved the spec
+      else if (j.stage === 'spec') j.stage = 'build';
       else if (j.stage === 'build') { j.stage = 'review'; j.round += 1; j.reviews = pendingReviews(j.title); }
       else if (j.stage === 'review') {
         const pending = REVIEWERS.map(([k]) => k).filter((k) => ranIn(j.reviews, k) && verdictOf(j.reviews[k]) === 'pending');
@@ -1175,9 +1217,16 @@
         else { j.stage = 'needs-human'; j.reason = 'Review rounds used up.'; }
       } else if (j.stage === 'approval') {
         if (j.run) { j.decision = 'APPROVE'; j.stage = 'done'; }
-        else if (hash(j.id) % 100 < 85) { j.decision = 'APPROVE'; j.stage = 'merging'; }
+        else if (hash(j.id) % 100 < 85) { j.decision = 'APPROVE'; j.stage = 'merging'; j.ci = { round: 1, status: 'pending', fixes: 0 }; }
         else { j.decision = 'ESCALATE'; j.stage = 'needs-human'; j.reason = 'The diff adds a dependency, so a human should look.'; }
-      } else if (j.stage === 'merging') j.stage = 'merged';
+      } else if (j.stage === 'merging') {
+        // CI on the pushed commit: about one in four goes red once, and the shepherd sends it back for a fix
+        const ci = j.ci || (j.ci = { round: 1, status: 'pending', fixes: 0 });
+        if (ci.status === 'pending' && !ci.fixes && hash(j.id + 'ci') % 100 < 25) { ci.status = 'fixing'; ci.fixes = 1; }
+        else if (ci.status === 'fixing') { ci.round += 1; ci.status = 'pending'; }
+        else if (ci.status === 'pending') ci.status = 'green';
+        else j.stage = 'merged';
+      }
     }
     demoTick++;
     board.updated = now;
@@ -1206,6 +1255,15 @@
     if (path === 'decision.md') return job.decision === 'APPROVE' || job.decision === 'ESCALATE'
       ? `${job.decision}\nReason: ${job.decision === 'APPROVE' ? 'All four reviews pass and every acceptance criterion has a test.' : job.reason}\nReviewed-SHA: 0000000 (demo)\n\n## Checklist\n1. ✓ Final round all PASS\n2. ✓ Every AC has evidence\n3. ✓ Diff stays in scope\n4. ✓ No open questions\n5. ${job.decision === 'APPROVE' ? '✓' : '✗'} Nothing on the always-escalate list`
       : null;
+    const cm = path.match(/^ci\/ci-(\d+)\.md$/);
+    if (cm && job.ci) {
+      const n = Number(cm[1]);
+      const red = job.ci.fixes && n === 1;
+      if (n === job.ci.round && job.ci.status === 'pending') return null;
+      return red
+        ? `FIX\nChecked-SHA: 0000000 (demo)\n\n## Items\n| # | Class | Source | What |\n|---|---|---|---|\n| 1 | fix | check \`test (api)\` | a sample failure this change caused |\n\n## For the builder\n1. \`apps/api/src/…:88\`: the root cause, the fix, and the command that proves it.`
+        : `GREEN\nChecked-SHA: 0000000 (demo)\n\n## Items\nNothing failed on the pushed commit, and no review comment needs anything.`;
+    }
     return null;
   }
 

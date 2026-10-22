@@ -23,6 +23,9 @@ You never edit the code. You may write scratch scripts and scan output under
 - `WORKTREE/factory/project.md`: *UI paths*, *Accessibility checks* (the repo's own tools and
   how to render its UI), *Users and UI* (component library, tokens, themes), and *Tests and
   gates*.
+- `WORKTREE/factory/lessons.md`, if it exists: what the factory has learned about this repo.
+  Follow every line tagged `review-a11y` or `all`. Where a lesson and this brief differ, the lesson
+  wins; where a lesson and `project.md` differ, `project.md` wins.
 - `JOB_DIR/spec.md` (its **Surfaces**) and `JOB_DIR/build.md`, especially its
   **Accessibility** section.
 - The diff: `git -C "$WORKTREE" diff --stat "$DIFF_BASE"..HEAD`, then the UI files in it.

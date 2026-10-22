@@ -29,6 +29,18 @@ base branch, finish it rather than rewrite it:
 
 If `feature.md` is a **completion gap**, fix exactly that gap and prove it.
 
+## Fixing CI after the push (`CI=<n>`)
+
+When your message carries `CI=<n>`, the work was already reviewed, approved and pushed, and
+then CI or a reviewer on the PR found something. `CI_FILE` (the shepherd's `ci-<n>.md`) is
+your brief: fix every item in its **For the builder** section (and the note in `rework.md`
+if the message names it), and nothing else. Find the root cause each entry names; don't
+silence a check, skip or loosen a test, raise a timeout, or edit CI
+configuration to get green. If the brief is wrong (the cause is elsewhere, or the fix needs
+something outside the spec), write `BLOCKED: <reason>` at the top of `build.md` and stop.
+Prove each fix with the command the brief gives, under the lock, and list each item under
+**Review responses** as `ci-<n> #<item>: fixed in <sha>`.
+
 ## Bringing the base branch in (`SYNC=<n>`)
 
 When your prompt or message carries `SYNC=<n>`, your only job is to bring the base branch
@@ -57,12 +69,14 @@ stop.
 
 - `WORKTREE/factory/project.md`: this repo's setup, test commands and rules. Where it is more
   specific than this brief, it wins.
+- `WORKTREE/factory/lessons.md`, if it exists: what earlier jobs here learned the hard way.
+  Follow every line tagged `builder` or `all`; each one cost an earlier job a round.
 - `JOB_DIR/spec.md`: what to build. Its acceptance criteria (`AC-n`) are your test plan. In
   an adopted spec, also read its **Drift from source** and **Shared rules from the plan**.
 - In a run, `RUN_DIR/plan.md`, for where this unit sits and what comes after it.
 - The repo's own agent instructions (`WORKTREE/CLAUDE.md` or `AGENTS.md`), if it has them.
 - On resume: every review in the `ROUND_DIR` you are given, and `JOB_DIR/rework.md` if the
-  message names it.
+  message names it, or `CI_FILE` for a CI round.
 
 ## Set up once
 
@@ -89,7 +103,11 @@ test file) don't need the lock.
 
 - Implement the spec. Stay inside its files-to-touch list. If you have to go wider, say why
   in `build.md`.
-- Prove every AC with a test or a command.
+- Prove every AC with a test or a command. **Write each AC's test first, and run it before the
+  code exists**: it must fail, on an assertion about the behavior. Record that failing run in
+  the evidence table. A test-quality reviewer re-checks this in a scratch checkout, and makes
+  mutants of your changed lines, so a test that would pass without your change, or that
+  doesn't notice a flipped condition, comes back as `CHANGES`.
 - Run the gates from `project.md` for what you touched, one at a time. Never run anything
   `project.md` tells you not to. Don't run the whole repo's test matrix unless `project.md`
   says that's the norm here; CI runs it.
@@ -134,9 +152,9 @@ Rewrite the whole file every round. It is yours alone.
 <file>: one line on what changed and why
 
 ## Acceptance criteria
-| AC | Proven by | Result |
-|---|---|---|
-| AC-1 | `tests/limits.test.ts` › "rejects the 11th request" | pass |
+| AC | Proven by | Fails without the change | Result |
+|---|---|---|---|
+| AC-1 | `tests/limits.test.ts` › "rejects the 11th request" | yes: expected 429, got 200 | pass |
 
 ## Commands run
 <exact commands, with pass and fail counts>
@@ -150,6 +168,6 @@ Rewrite the whole file every round. It is yours alone.
 
 ## When you are resumed for a review round
 
-Read all four reviews in `ROUND_DIR`. Fix every blocking item, or decline it with a reason
+Read every review in `ROUND_DIR`. Fix every blocking item, or decline it with a reason
 under Review responses. Reviewers see your answer in the next round. Re-run the affected
 tests, commit, rewrite `build.md`, and stop.

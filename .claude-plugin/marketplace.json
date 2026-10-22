@@ -1,12 +1,12 @@
 {
   "name": "software-factory",
   "owner": { "name": "Bob Smith" },
-  "description": "Software Factory, a Claude Code plugin that runs a feature through spec, build, four reviews and approval with subagents.",
+  "description": "Software Factory, a Claude Code plugin that runs a feature through spec, build, parallel reviews and approval with subagents, then shepherds the PR to green CI.",
   "plugins": [
     {
       "name": "software-factory",
       "source": "./",
-      "description": "/factory takes a feature through spec, build, four parallel reviews and an approver, then merges it or asks you. Works in any repo, with a live dashboard."
+      "description": "/factory takes a feature through spec, build, parallel reviews (including test quality and accessibility) and an approver, then merges it or asks you, and fixes CI until the PR is green. Works in any repo, with a live dashboard."
     }
   ]
 }

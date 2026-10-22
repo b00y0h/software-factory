@@ -14,6 +14,8 @@ this file before working, and it wins over their generic briefs wherever they di
 | Branch names | <the rule, e.g. `<type>/<kebab-summary>`, and when a functional prefix applies>. Never `factory/`. | <merged branch names, CI rules> |
 | Previews | <what triggers a preview environment and where its URL appears, or `none`> | |
 | ADR runs | Branch `<prefix>/<adr file name>`; PR opens as a draft: yes / no | |
+| Spec approval | `off` / `risky` / `always`: when a human approves a spec (or a run's plan) before it is built | |
+| CI shepherd | `on` / `off`; wait up to <minutes, default 30> for checks after a push | <the CI that runs on PRs> |
 
 ## Stack
 
@@ -47,6 +49,17 @@ regenerates them, and overlap warnings ignore them. One per line, as a glob patt
 command that regenerates it.
 
 - `<glob>`: `<command>`
+
+## Test quality
+
+How the test-quality reviewer proves that tests would catch a bug. It works in a scratch
+checkout (a `git worktree` outside the floor), never in the floor itself.
+
+- Mutation tool: <Stryker / mutmut / PIT / cargo-mutants / Infection / none>, and the command
+  that runs it **scoped to some files**: `<command with a <files> placeholder>`
+- Scratch checkout setup: <the fastest way to make a fresh `git worktree` able to run one test
+  file, e.g. `ln -s <floor>/node_modules node_modules`, or "same as *Set up a fresh worktree*">
+- Test files: <globs for this repo's tests, so source and tests can be told apart>
 
 ## UI paths
 

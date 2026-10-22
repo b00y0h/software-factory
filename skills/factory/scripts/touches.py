@@ -3,12 +3,15 @@
 
     git -C <WORKTREE> diff --name-only <DIFF_BASE>..HEAD | python3 touches.py ui <FACTORY>/project.json
     ... | python3 touches.py generated <FACTORY>/project.json
+    ... | python3 touches.py code <FACTORY>/project.json
 
 Prints the paths that match, one per line, and exits 0 if any did, 1 if none did.
 
 - ui: the profile's `ui` patterns (project.json), or the built-in UI list when it has none.
   Tests, stories and generated files never count as UI.
 - generated: the built-in generated list plus the profile's `generated` patterns.
+- code: everything that can change behavior or its tests, so the test-quality reviewer runs.
+  Docs, plain text, images and generated files never count.
 
 Globs match like the dashboard's: `*` stays inside one folder, `**/` is any number of
 folders (including none), and `**` is anything.
@@ -24,6 +27,9 @@ NEVER_UI = ['**/*.test.*', '**/*.spec.*', '**/__tests__/**', '**/tests/**', '**/
 BUILT_IN_GENERATED = ['**/pnpm-lock.yaml', '**/package-lock.json', '**/yarn.lock', '**/bun.lockb',
                       '**/payload-types.ts', '**/importMap.js', '**/*.generated.*',
                       '**/__generated__/**', '**/dist/**']
+NOT_CODE = ['**/*.md', '**/*.mdx', '**/*.txt', '**/*.rst', '**/*.adoc', 'docs/**', '**/LICENSE*',
+            '**/CHANGELOG*', '**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.gif', '**/*.svg', '**/*.webp',
+            '**/*.ico', '**/.gitignore', 'factory/**']
 
 
 def glob_to_re(glob):
@@ -56,7 +62,7 @@ def matcher(globs):
 
 
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in ('ui', 'generated'):
+    if len(sys.argv) < 2 or sys.argv[1] not in ('ui', 'generated', 'code'):
         sys.exit(__doc__)
     project = {}
     if len(sys.argv) > 2:
@@ -68,6 +74,9 @@ def main():
     generated = matcher(BUILT_IN_GENERATED + list(project.get('generated') or []))
     if sys.argv[1] == 'generated':
         keep = generated
+    elif sys.argv[1] == 'code':
+        not_code = matcher(NOT_CODE)
+        keep = lambda p: not not_code(p) and not generated(p)
     else:
         is_ui = matcher(project.get('ui') or BUILT_IN_UI)
         never = matcher(NEVER_UI)

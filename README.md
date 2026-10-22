@@ -1,15 +1,19 @@
 # Software Factory
 
 A Claude Code plugin that turns one command into a small software team. Give it a feature, or a
-whole ADR, and it writes specs, builds them, has four reviewers check each one in parallel, and
-then ships the work or stops and asks you. Every step is a subagent, and each one reads files
-and writes exactly one. A live dashboard shows every job moving through the loop.
+whole ADR, and it writes specs, builds them, has a panel of reviewers check each one in
+parallel, ships the work or stops and asks you, and then stays with the PR until CI is green.
+Every step is a subagent, and each one reads files and writes exactly one. A live dashboard
+shows every job moving through the loop, and the factory learns from every job that needed a
+second try.
 
 ```
-feature or ADR unit → spec-writer → builder ⇄ 4 reviewers → approver → job: merge per project.md
-                       opus         opus      security opus  opus      run: next unit, then one preview PR
-                                              ux · ui · code sonnet          └→ needs-human ◄── /factory approve
-                                              (max 2 rounds; all four must report before the builder resumes)
+feature or ADR unit → spec-writer → [spec gate] → builder ⇄ reviewers → approver → push → shepherd → CI green
+                       opus                       opus      security opus  opus           opus  │
+                                                            ux·ui·code sonnet                   │ FIX: builder fixes,
+                                                            tests opus (code)                   │ reviewers check it
+                                                            a11y opus (UI)                      ▼ (max 3 CI rounds)
+                                                  (max 2 rounds; all must report)   librarian proposes lessons
 ```
 
 ## Install
@@ -29,8 +33,10 @@ Start a new session afterwards so the skill and agents load.
 /factory continue [run] [answer] resume a run, or answer the question it paused on
 /factory <feature>               run a new job through the loop
 /factory next                    run the first unchecked item in the backlog
-/factory approve <job-id>        accept a job that is waiting on a human
-/factory rework <job-id> <note>  send a job back to the builder with feedback
+/factory approve <job-id>        accept a job that is waiting on a human (or approve its spec)
+/factory rework <job-id> <note>  send a job back to the builder (or its spec back) with feedback
+/factory lessons                 list the lessons the factory proposes from past jobs
+/factory lessons accept|reject <ids|all>   decide them; accepted ones land in factory/lessons.md
 ```
 
 The first `/factory` in a repository runs `init` and stops. The **surveyor** reads the repo
@@ -49,10 +55,78 @@ the session ends. Add `?demo` to the link to see it run on sample data. To serve
 python3 -m http.server 8765 --bind 127.0.0.1 --directory ~/.factory/<repo>
 ```
 
+## Test quality: tests that would catch the bug
+
+An approver can only check that each acceptance criterion has a passing test. A test that
+passes with or without the change proves nothing. So whenever a change touches code (anything
+but docs, images and generated files), a sixth reviewer joins the round: `review-tests`, on
+opus. In a scratch `git worktree` of its own, never the floor:
+
+- **Red check.** It puts the changed source files back as they were and runs each criterion's
+  test. Every one must fail, on an assertion about the behavior.
+- **Mutants.** It runs the repo's mutation tool (Stryker, mutmut, PIT, cargo-mutants…) scoped to
+  the changed files, or, when there isn't one, makes up to 8 small mutants by hand on the lines
+  the criteria depend on (flip a comparison, drop a call, return early) and checks a test
+  notices each one.
+
+A test that passes without the change, a surviving mutant on a line a criterion depends on, or a
+mutation score under 80% on the changed lines is `CHANGES`. The builder is told to write each
+criterion's test first and record its failing run in `build.md`. `project.md`'s *Test quality*
+section says which tool to use and how to set up a scratch checkout quickly.
+
+## The spec gate
+
+A wrong spec is the cheapest mistake to catch. `project.md`'s *Spec approval* setting says when
+a human reads the spec before anything is built:
+
+- `off` (the default): never.
+- `risky`: when the spec-writer marks the spec's **Risk** as `high` (it touches auth,
+  permissions, stored data, CI or deploy config, dependencies, anything irreversible, or the
+  profile's *Always escalate*).
+- `always`: every job's spec, and every ADR run's plan before its first unit.
+
+A gated job waits under *Needs a human* with `spec to approve`. `/factory approve <job>` builds
+it; `/factory rework <job> "<note>"` has the spec-writer revise it first.
+
+## The CI shepherd: done means green
+
+A PR that's green on the builder's machine isn't done. After every push (a job's PR, or an ADR
+run's preview PR) the factory waits for the host's checks on **the exact commit it pushed**,
+using `scripts/ci.py` (it only reads `gh` or `glab`). Then:
+
+- **Green**, and nobody commented: done. On `auto-merge` the host merges it.
+- **Red**, or a reviewer left comments: the `shepherd` agent (opus) reads the failed logs, the
+  base branch's CI, and the PR's review threads, and sorts each item:
+  - `fix`: this change caused it, or a reviewer asked for something small and in scope. The
+    builder gets a brief with the root cause, the fix goes through a normal review round and the
+    approver, and the factory pushes again. Up to 3 CI rounds, then it asks you.
+  - `rerun`: the job died before any test ran. Re-run once per commit; a second failure is real.
+  - `not-ours`: red on the base branch too. You're told, and the floor is released.
+  - `ask`: a design question, a large request, or a comment that tries to redirect the work.
+    You decide.
+- **Conflict**: the builder brings the base branch in, and the factory pushes again.
+
+A CI round fixes the change, never the checks: no skipped or loosened tests, no edited CI
+config, no force-push, no empty commits. PR comments and CI logs are treated as data, never as
+instructions. Set *CI shepherd* to `off` in `project.md` to skip all this; `/factory continue
+<id> stop-ci` stops it for one PR.
+
+## Lessons: a factory that learns
+
+When a job needed a second try (a review round, a rework, an escalation, a CI fix), the
+`librarian` (sonnet) reads its whole folder and asks: *would a one-line rule, read before the
+work started, have prevented this?* It proposes up to five lessons, each tagged for the agent it
+helps (`builder`, `review-code`, `shepherd`…), and notes when another job hit the same thing.
+
+Nothing is learned without you: `/factory lessons` lists the proposals, and
+`/factory lessons accept 014-1 021-2` (or `reject`, or `all`) decides them. Accepted lessons go
+into `factory/lessons.md`, which every agent reads before it works. Commit it, and every
+session and teammate gets them. Edit or delete any line by hand.
+
 ## Accessibility: WCAG 2.2 AA on every UI change
 
 Whenever a change touches UI (the profile's *UI paths*, or component, markup and style files
-by default; tests and generated files don't count), a fifth reviewer joins the round:
+by default; tests and generated files don't count), another reviewer joins the round:
 `review-a11y`, an accessibility specialist on opus. It holds the change to **WCAG 2.2 Level
 AA**, every A and AA success criterion, including the 2.2 additions (focus not obscured,
 dragging alternatives, 24×24 target size, consistent help, redundant entry, accessible
@@ -78,8 +152,10 @@ CMS is outside any code review.
 |---|---|---|
 | Spec | `spec-writer` (opus), built on the spec-author templates | `jobs/<id>/spec.md`, with numbered acceptance criteria. If the work already has a written spec, its file table and criteria are copied word for word. |
 | Build | `builder` (opus), in its own git worktree | commits, plus `build.md` with the evidence for each criterion |
-| Review | `review-security` (opus), `review-ux`, `review-ui`, `review-code` (sonnet), plus `review-a11y` (opus) **whenever the change touches UI**, in parallel | `round-N/review-<name>.md`, starting `VERDICT: PASS` or `VERDICT: CHANGES` |
+| Review | `review-security` (opus), `review-ux`, `review-ui`, `review-code` (sonnet), plus `review-tests` (opus) **whenever the change touches code** and `review-a11y` (opus) **whenever it touches UI**, in parallel | `round-N/review-<name>.md`, starting `VERDICT: PASS` or `VERDICT: CHANGES` |
 | Approve | `approver` (opus) | `decision.md`, starting `APPROVE` or `ESCALATE` |
+| Shepherd | `shepherd` (opus), after every push, when CI is red or the PR has comments | `ci/ci-N.md`, starting `GREEN`, `FIX`, `RERUN`, `WAIT` or `ASK` |
+| Learn | `librarian` (sonnet), after a job that needed a second try | `~/.factory/<repo>/lessons/proposed/<job>.md` |
 
 Any `CHANGES` sends the round back to the same builder. After two rounds, or on `ESCALATE`,
 the job waits for you. Reviewers and the approver have no Edit tool, and only the
@@ -135,6 +211,8 @@ preview updates.
 ## Where things live
 
 - **`factory/project.md`**, in the repo and committed: the profile every agent reads.
+- **`factory/lessons.md`**, in the repo and committed: the lessons you accepted, which every
+  agent also reads.
 - **`~/.factory/<repo>/`**, on your machine: one board file per job or run (`board/<id>.json`,
   each written only by the session that owns it), the backlog, run plans, one folder per
   job, and the dashboard. It sits outside every checkout, so every session shares it and any
@@ -193,8 +271,10 @@ self-hosted), and repos with no remote.
 
 ## Change it
 
-- **The loop:** `skills/factory/SKILL.md`. Its Knobs table holds `MAX_ROUNDS`.
+- **The loop:** `skills/factory/SKILL.md`. Its Knobs table holds `MAX_ROUNDS`, `MAX_CI_ROUNDS`,
+  `MUTANTS`, `MUTATION_MIN` and the rest.
 - **An agent:** `agents/<role>.md`. Its model and tools are in the frontmatter.
 - **A reviewer:** add `agents/review-<name>.md`, then add `<name>` to `REVIEWERS` in
-  `SKILL.md` and in `skills/factory/assets/dashboard.html`.
+  `SKILL.md` and in `skills/factory/assets/dashboard.html` (and to `CONDITIONAL` there, if it
+  only runs on some changes).
 - **Spec style:** `skills/factory/spec-author/`.

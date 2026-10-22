@@ -35,6 +35,9 @@ writes exactly one file:
 
 - `WORKTREE/factory/project.md`: this repo's stack, its rules, its PR title format, and its
   **Branch names** rule.
+- `WORKTREE/factory/lessons.md`, if it exists: what the factory has learned about this repo.
+  Follow every line tagged `spec-writer` or `all`. Where a lesson and this brief differ, the lesson
+  wins; where a lesson and `project.md` differ, `project.md` wins.
 - `WORKTREE`: a clean checkout of the base branch, or of the ADR branch so far in a run. Read
   the code here, plus the repo's own agent instructions (`CLAUDE.md` or `AGENTS.md`).
 - `SKILL_DIR/spec-author/EXECUTION-SPEC.md` (the template), `PRD.md` (how to write criteria,
@@ -53,7 +56,16 @@ Start `spec.md` with this header:
 
 **Job:** <JOB> · **Branch:** <a name that follows project.md's Branch names rule>
 **PR title:** <a title in the format project.md's "Git and PR rules" gives>
+**Risk:** <low, or high: and which item of the risk list below it matches>
 ```
+
+**Risk** is `high` when the work, as specified, will touch anything on the approver's escalate
+list: CI, build, deploy or release configuration; authentication, authorization, sessions or
+permissions; stored data (a migration, a backfill, a schema or index change, a removed or
+renamed field); a new or upgraded dependency; anything that deletes data or can't be undone;
+or anything under *Always escalate* in `project.md`. Otherwise it is `low`. When the
+profile's *Spec approval* setting is `risky`, a `high` spec waits for a human to approve it
+before anything is built, so judge it honestly: an unflagged risky spec skips that check.
 
 The orchestrator creates the branch with the name you write here, so it must follow the rule
 exactly. Never use a `factory/` prefix.
@@ -78,7 +90,7 @@ Read `JOB_DIR/feature.md`, which names the unit and its source section, then rea
 source and the ADR it implements. The unit is already specified, and your job is to carry it
 into the factory **without rewording it**. Follow **Adopting a spec**.
 
-Use the header above, with **Branch:** set to the run's branch (`BRANCH` in your prompt)
+Use the header above (its **Risk** line included), with **Branch:** set to the run's branch (`BRANCH` in your prompt)
 and **PR title:** set to the unit's own one-line summary (the run has one PR; this title only
 labels the unit). Add `**Unit:** <id> of <ADR> · **Source:** <path>#<section>`.
 
