@@ -316,9 +316,12 @@ Before any command:
    the user the link the first time in a session, and whenever it says `started`. Every
    session's work shows on that one page. If the script fails, say why in one line and carry
    on: the dashboard is a view, never a blocker.
-6. Tidy up your own board file only: if your job is `merging` or your run `pushed`, check its
-   PR or MR (`gh pr view <url> --json state`, or `glab mr view <url> -F json`). If it is
-   merged, set `merged`. If its `ci.status` is `pending` (an earlier wait ran out, or the
+6. Record merges, on **every** board file: run `python3 <SKILL_DIR>/scripts/sweep.py
+   <FACTORY> --once`. It asks the host about each pushed run and `merging` job, in any
+   session's board file, and marks the ones whose PR or MR has merged `merged` (or closed
+   without merging, `closed`). That is the one change any session, and the sweeper the
+   dashboard script keeps running, may make to a board file it doesn't own (see **Board
+   files**). Then, for your own board file only: if your job's or run's `ci.status` is `pending` (an earlier wait ran out, or the
    session ended mid-wait), run `ci.py` once **without** `--wait` and carry on from step 3
    of **Shepherding the PR** with what it prints. Otherwise never poll.
 7. Keep `FACTORY/project.json` in step with `PROFILE`: its `name`, `host` and `merge` from the
@@ -901,6 +904,16 @@ Rewrite your whole file on every change: write `<BOARD>.tmp` (the dashboard igno
 not ending in `.json`), then `mv` it over `BOARD`, so the dashboard never reads half a file.
 Bump `updated` at the top, and on the run or job you touched.
 
+**Merged and closed are final, and anyone may record them.** A session that ends never runs
+another command, so it can't be the only one to notice its PR merged. `scripts/sweep.py`
+does: `dashboard.sh` keeps one running per state folder (every 5 minutes, logging to
+`FACTORY/sweep.log`), and every command runs it once. It changes a board file only to move a
+run from `pushed`, or a job from `merging`, to `merged` or `closed`, and only when the host
+says so. So **before you rewrite your board file, re-read it**, and keep any run or job it
+now shows as `merged` or `closed` that way: never move work back out of either stage. If the
+sweeper marked your run or job merged, its work is finished; stop shepherding it and clean up
+its bays.
+
 A run's file holds the run and all of its unit jobs. A standalone job's file holds just that
 job, with an empty `runs`. `plugin` is this plugin's version (from `.claude-plugin/plugin.json`
 two folders above `SKILL_DIR`), so the dashboard knows what this session will do, such as
@@ -970,7 +983,8 @@ bringing the base branch in before it pushes.
 ```
 
 - Job `stage` is one of `spec`, `build`, `review`, `approval`, `needs-human`, `merging`,
-  `merged`, or `done` (a run unit accepted onto the run's branch). A `needs-human` job's
+  `merged`, `closed` (its PR was closed without merging), or `done` (a run unit accepted onto
+  the run's branch). A `needs-human` job's
   `gate` says why it waits: `spec` (the spec gate), `ci` (the shepherd), or `null`
   (an escalation or used-up rounds). A run paused at the spec gate has `gate: "plan"`.
   Its `risk` is the spec's `low` or `high`.
@@ -978,7 +992,7 @@ bringing the base branch in before it pushes.
   "reruns" }`, with `status` one of `pending`, `fixing`, `green`, `blocked`, `stale`,
   `none`, `off`, `error`. A job outside a run has no
   `run` or `unit`, and keeps its own `files` and `overlaps`.
-- Run `stage` is one of `planning`, `running`, `paused`, `pushed`, `merged`. A unit's `status`
+- Run `stage` is one of `planning`, `running`, `paused`, `pushed`, `merged`, `closed`. A unit's `status`
   is one of `queued`, `active`, `done`, `skipped`, `ask`. Each unit has `depends` (unit ids)
   and `ships` (`run` or `own`); an `own` unit also has its `branch`, `url` and `sha` once
   pushed. A run is `merged` once its PR and every `own` unit's PR have merged.
@@ -999,6 +1013,8 @@ bringing the base branch in before it pushes.
 
 ## Rules
 
+- Each board file has one owner, the session that made it. The one exception: anyone may mark
+  pushed work `merged` or `closed` when the host says so, and nobody ever undoes that.
 - Agents get their context from files, not from this conversation, and each one writes only
   its own file. You write your `BOARD`, `feature.md`, `rework.md`, `plan-notes.md`,
   `lessons/decided.md`, and the backlog tick.

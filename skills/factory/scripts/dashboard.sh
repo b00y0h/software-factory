@@ -7,7 +7,7 @@
 # session), or "started <url>" when it starts one. --open opens the link in the default
 # browser, but only when it had to start the server. The server listens on 127.0.0.1 only,
 # on the first port from 8765 that is free or already serving this folder, and keeps running
-# after this script exits.
+# after this script exits. It also makes sure sweep.py is running for this folder (see below).
 set -euo pipefail
 
 state="${1:?usage: dashboard.sh <state folder> [--open]}"
@@ -31,6 +31,19 @@ port_free() {
 }
 
 report() { printf '%s\n' "$2" > "$state/dashboard.url"; echo "$1 $2/dashboard.html"; }
+
+# One sweeper per state folder, beside the server: it marks pushed work merged (or closed) once
+# its PR or MR is, so the board stays right after the session that pushed it has ended. It only
+# reads the host. Its log is sweep.log in the state folder.
+ensure_sweep() {
+  local pidfile="$state/.sweep.pid" here
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ -s "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then return 0; fi
+  command -v gh >/dev/null 2>&1 || command -v glab >/dev/null 2>&1 || return 0
+  nohup python3 "$here/sweep.py" "$state" >>"$state/sweep.log" 2>&1 &
+  echo $! > "$pidfile"
+}
+ensure_sweep || true
 
 # The link another session recorded, if that server is still up.
 if [ -s "$state/dashboard.url" ] && serves_us "$(cat "$state/dashboard.url")"; then

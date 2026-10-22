@@ -282,7 +282,11 @@ run side by side:
   `one-off` tag. Serve it once; every session's work appears there.
   When a run's PR merges (or a job's), its strip and cards leave the board for the **Shipped**
   list at the bottom: a permanent record of everything the factory has finished, with its
-  units, branch, PR and plan.
+  units, branch, PR and plan. A PR closed without merging goes there too, marked closed.
+  You don't need the session that pushed it to still be open: the dashboard script also keeps
+  a small sweeper running (`scripts/sweep.py`, every 5 minutes, log in `sweep.log`) that asks
+  `gh` or `glab` about every pushed PR and records the merge, and every `/factory` command
+  runs it once too. It only reads the host, and only ever moves work to merged or closed.
 - **One profile.** Every session reads the same `factory/project.md`, and only `/factory init`
   writes it.
 - **Taking turns on the heavy work.** Builders run installs, builds, typechecks, lints and test

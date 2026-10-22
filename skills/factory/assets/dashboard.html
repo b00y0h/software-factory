@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="factory-dashboard-version" content="12">
+<meta name="factory-dashboard-version" content="13">
 <title>Software Factory</title>
 <!--
   The factory's dashboard. The master copy lives in the software-factory plugin
@@ -619,16 +619,18 @@
   }
 
   // Finished work leaves the board for the Shipped list: a run once its PR has merged (its unit
-  // cards go with it), and a standalone job once it has merged.
+  // cards go with it), and a standalone job once it has merged. Work whose PR was closed without
+  // merging goes there too, marked closed. sweep.py records both, even after a session ends.
+  const FINAL = new Set(['merged', 'closed']);
   function splitBoard() {
     const runs = board.runs || [], jobs = board.jobs || [];
-    const shippedRuns = new Set(runs.filter((r) => r.stage === 'merged').map((r) => r.id));
+    const shippedRuns = new Set(runs.filter((r) => FINAL.has(r.stage)).map((r) => r.id));
     return {
       runs: runs.filter((r) => !shippedRuns.has(r.id)),
-      jobs: jobs.filter((j) => (j.run ? !shippedRuns.has(j.run) : j.stage !== 'merged')),
+      jobs: jobs.filter((j) => (j.run ? !shippedRuns.has(j.run) : !FINAL.has(j.stage))),
       history: [
         ...runs.filter((r) => shippedRuns.has(r.id)).map((item) => ({ kind: 'run', item })),
-        ...jobs.filter((j) => !j.run && j.stage === 'merged').map((item) => ({ kind: 'job', item })),
+        ...jobs.filter((j) => !j.run && FINAL.has(j.stage)).map((item) => ({ kind: 'job', item })),
       ].sort((a, b) => String(b.item.updated || '').localeCompare(String(a.item.updated || ''))),
     };
   }
@@ -646,7 +648,7 @@
     return `<div class="hist" style="${color}">
       <span class="swatch" aria-hidden="true"></span>
       <button type="button" class="hist-title" ${open} title="${esc(item.title || item.id)}">${esc(item.title || item.id)}</button>
-      <span class="hist-meta">${esc(what)}</span>
+      <span class="hist-meta">${esc(what)}${item.stage === 'closed' ? ` · ${prWord()} closed, not merged` : ''}</span>
       <span class="hist-meta mono" title="${esc(item.branch || '')}">${esc(item.branch || '')}</span>
       <span class="hist-when"><span data-ago="${esc(item.updated || '')}">${esc(ago(item.updated))}</span>${url ? ' · ' + url : ''}</span>
     </div>`;
@@ -697,7 +699,7 @@
     }
     return u.status || 'queued';
   }
-  const RUN_ORDER = { running: 0, paused: 0, planning: 0, pushed: 1, merged: 2 };
+  const RUN_ORDER = { running: 0, paused: 0, planning: 0, pushed: 1, merged: 2, closed: 2 };
 
   // Overlaps: open runs and standalone jobs (from any session) whose files intersect. Two
   // paths overlap when they're equal, or one is a folder containing the other. Generated
@@ -730,9 +732,9 @@
     const generated = [...DEFAULT_GENERATED, ...(board.project?.generated || [])].map(globToRe);
     const counts = (f) => { const p = normPath(f); return p && !generated.some((re) => re.test(p)); };
     const items = [
-      ...(board.runs || []).filter((r) => r.stage !== 'merged').map((r) => ({ id: r.id, title: r.title || r.id, kind: 'run', stage: r.stage,
+      ...(board.runs || []).filter((r) => !FINAL.has(r.stage)).map((r) => ({ id: r.id, title: r.title || r.id, kind: 'run', stage: r.stage,
         syncs: syncsBeforePush(r.plugin), files: (r.files || []).filter(counts), recorded: r.overlaps || [] })),
-      ...(board.jobs || []).filter((j) => !j.run && j.stage !== 'merged').map((j) => ({ id: j.id, title: j.title || j.id, kind: 'job', stage: j.stage,
+      ...(board.jobs || []).filter((j) => !j.run && !FINAL.has(j.stage)).map((j) => ({ id: j.id, title: j.title || j.id, kind: 'job', stage: j.stage,
         syncs: syncsBeforePush(j.plugin), files: (j.files || []).filter(counts), recorded: j.overlaps || [] })),
     ];
     overlapInfo = new Map(items.map((i) => [i.id, i]));
