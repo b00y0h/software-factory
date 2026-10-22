@@ -101,6 +101,7 @@ tools it may use, so reviewers and the approver cannot edit code: they have no E
 | Role | `subagent_type` | Model | Writes |
 |---|---|---|---|
 | surveyor | `software-factory:surveyor` | opus | the repo's `factory/project.md` (only at init) |
+| bay-check | `software-factory:bay-check` | haiku | `FACTORY/bay-check/result.json`, once, to prove bays work here (see **The bay check**) |
 | spec-writer | `software-factory:spec-writer` | opus | `spec.md`, or a run's `plan.md` |
 | builder | `software-factory:builder` | opus | commits on the branch, plus `build.md` |
 | review-security | `software-factory:review-security` | opus | `round-N/review-security.md` |
@@ -198,9 +199,14 @@ Agent tool's `isolation: "worktree"`, which gives it a worktree of its own that 
 Bays let one session build independent units of a run side by side, start a new job while the
 floor is busy, and fix a pushed PR's CI without stopping whatever the floor is doing.
 
-- **Are there bays?** Only if your Agent tool offers the `isolation` input. If it doesn't,
+- **Are there bays?** Only if `PROFILE`'s *Bays* setting is `yes` (proven by **The bay
+  check**) **and** your Agent tool offers the `isolation` input in this session. Otherwise
   there are none: everything runs on the floor, one job at a time, and work that wanted a bay
   waits for the floor's next free moment.
+- **If a bay fails anyway** (a bay agent reports it can't edit, commit or write its file
+  where the check said it could), stop using bays for the rest of this session: run that job
+  again on the floor at its next free moment, tell the user in one line, and suggest
+  `/factory init` to check again.
 - **At most `MAX_BAYS` at once.** Count the bay jobs your board files hold between `spec` and
   `approval`, plus CI rounds in progress. Heavy commands still take turns under
   `tests.lock`, so bays mostly overlap the thinking and the reviews, not the test runs.
@@ -224,9 +230,16 @@ floor is busy, and fix a pushed PR's CI without stopping whatever the floor is d
   HEAD>`. It rebuilds its context from the job folder.
 - **Record it.** A bay job's board entry has `bay` set to the bay's path, so the dashboard
   and other sessions know it doesn't hold the floor.
+- **The Agent tool makes a branch too.** Each isolated worktree starts on a branch the tool
+  creates (`worktree-agent-<id>`; its result names it as `worktreeBranch`, and its path as
+  `worktreePath`). Bay agents detach from it at once, so the factory never uses it, never
+  pushes it, and never names a job's branch after it. Record it in the job's board entry
+  as `bayBranch`.
 - **Clean up** when the job is merged, accepted onto a run, or abandoned: if
   `git -C <WORKTREE> worktree list` still shows its bay, `git -C <WORKTREE> worktree remove
-  --force <bay>`, then `git -C <WORKTREE> worktree prune`.
+  --force <bay>`; then delete its `bayBranch` (`git -C <WORKTREE> branch -D <bayBranch>`,
+  only when it has no upstream and no board file names it as a job's `branch`), and
+  `git -C <WORKTREE> worktree prune`.
 
 **The state folder** (`FACTORY`) is `~/.factory/<repo>/`, outside every checkout and shared
 by every session:
@@ -309,9 +322,45 @@ Before any command:
    session ended mid-wait), run `ci.py` once **without** `--wait` and carry on from step 3
    of **Shepherding the PR** with what it prints. Otherwise never poll.
 7. Keep `FACTORY/project.json` in step with `PROFILE`: its `name`, `host` and `merge` from the
-   Settings table, `generated` from the *Generated files* list, and `ui` from the *UI paths*
-   list. Rewrite it (write a `.tmp`
-   file, then `mv`) only if something differs.
+   Settings table, `generated` from the *Generated files* list, `ui` from the *UI paths*
+   list, and `bays` from the *Bays* row (`yes` is `true`; keep the bay check's value when the
+   profile has no such row). Rewrite it (write a `.tmp` file, then `mv`) only if something
+   differs. If it has no `bays` at all, run **The bay check** now.
+
+## The bay check
+
+Bays rest on one assumption: that an agent the Agent tool puts in a worktree of its own can
+check out a commit, edit with the Edit and Write tools, commit, and write its result into
+`FACTORY`. Claude Code may refuse edits outside a session's own worktree, so the factory
+proves it once instead of assuming it. It takes a minute and uses a tiny model.
+
+1. **Does the Agent tool offer `isolation`?** If not, the result is
+   `no: the Agent tool here has no worktree isolation`. Skip to step 4.
+2. **Spawn `bay-check`** with `isolation: "worktree"` and the prompt `START=<BASE_REF sha>`
+   and `FACTORY=<abs>`. Wait for it.
+3. **Check every claim yourself**; don't take its word for any of them:
+   - its `worktree` is not `ROOT` and not your floor, and `git -C <WORKTREE> worktree list`
+     lists it;
+   - `git -C <WORKTREE> cat-file -e <commit>` succeeds, and `git -C <WORKTREE> show
+     <commit>:.factory-bay-check` prints `bay check ok`;
+   - `FACTORY/bay-check/result.json` exists and says the same as its final message.
+
+   All three hold: `yes`. Anything else: `no: <the first thing that failed, in a few words>`
+   (for example `no: Edit refused outside the session's worktree`, or `no: commit signing
+   failed in the bay`).
+4. **Clean up**, whatever the result: `git -C <WORKTREE> worktree remove --force <its
+   worktree>` if it is still listed, delete the branch the Agent tool made for it
+   (`worktreeBranch` in the Agent result: `git -C <WORKTREE> branch -D <it>`),
+   `git -C <WORKTREE> worktree prune`, and remove `FACTORY/bay-check/`. The check's commit was never on a branch and is never pushed; git
+   drops it on its own.
+5. **Record it** in `FACTORY/project.json` as `bays` (`true` or `false`) and `baysWhy` (the
+   reason, for `no`), and pass the result to the surveyor as `BAYS=<result>` so the
+   profile's *Bays* row says it, with the date and this plugin's version.
+
+It runs in **Setup**, and once, before anything else, in any command whose `project.json`
+has no `bays` yet (a repo set up before this check existed). Then, if the profile has no
+*Bays* row, say in one line what the check found and that `/factory init` would record it in
+`factory/project.md`.
 
 ## Setup
 
@@ -321,12 +370,14 @@ Before any command:
 2. Copy `SKILL_DIR/assets/README.md` to `WORKTREE/factory/README.md`, and
    `SKILL_DIR/assets/lessons.md` to `WORKTREE/factory/lessons.md` if there isn't one (never
    replace an existing one: it is what the factory has learned). Create
-   `FACTORY/lessons/proposed/`. Spawn the `surveyor`. It inspects the repo and writes
-   `PROFILE`.
+   `FACTORY/lessons/proposed/`. Run **The bay check**. Then spawn the `surveyor` with
+   `BAYS=<the result>`. It inspects the repo and writes `PROFILE`.
 3. Write `FACTORY/project.json` from `PROFILE`: the name, host and merge mode from Settings,
-   the *Generated files* patterns as `generated`, and the *UI paths* patterns as `ui`.
+   the *Generated files* patterns as `generated`, the *UI paths* patterns as `ui`, and the
+   bay check's `bays` and `baysWhy`.
 4. Show the user the Settings table, and say in a line what the merge mode and the branch
-   rules mean for them, plus what *Spec approval* and *CI shepherd* are set to. Then stop and
+   rules mean for them, plus what *Spec approval* and *CI shepherd* are set to, and whether
+   bays work here (so independent units and CI fixes run side by side) or not, and why. Then stop and
    ask them to read `factory/project.md` (and commit it with `factory/lessons.md`, so
    teammates and other sessions share them) before the first job. It governs what gets
    run, what gets pushed, and what gets merged.
@@ -931,7 +982,8 @@ bringing the base branch in before it pushes.
   is one of `queued`, `active`, `done`, `skipped`, `ask`. Each unit has `depends` (unit ids)
   and `ships` (`run` or `own`); an `own` unit also has its `branch`, `url` and `sha` once
   pushed. A run is `merged` once its PR and every `own` unit's PR have merged.
-- A job built in a bay has `bay` (the bay's path), else `null`. A run unit's job has `ships`. A unit that was done before the run
+- A job built in a bay has `bay` (the bay's path) and `bayBranch` (the branch the Agent tool
+  made for it, deleted at clean-up), else both are `null`. A run unit's job has `ships`. A unit that was done before the run
   has `prior` (the evidence) and no job. A unit whose code came from another branch has
   `adopted` (that branch).
 - A run's `continuedFrom` is the existing branch it picked up (or `null`), and its

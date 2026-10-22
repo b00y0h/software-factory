@@ -15,6 +15,7 @@ this file before working, and it wins over their generic briefs wherever they di
 | Previews | <what triggers a preview environment and where its URL appears, or `none`> | |
 | ADR runs | Branch `<prefix>/<adr file name>`; PR opens as a draft: yes / no; units ship: `one PR` (default) / `one PR per unit` / `as the plan says` | <how earlier ADRs here were merged> |
 | Spec approval | `off` / `risky` / `always`: when a human approves a spec (or a run's plan) before it is built | |
+| Bays | `yes` / `no: <reason>`: whether a builder in its own worktree can edit and commit here, so independent units and CI fixes run side by side | <the bay check's result, its date and plugin version> |
 | CI shepherd | `on` / `off`; wait up to <minutes, default 30> for checks after a push | <the CI that runs on PRs> |
 
 ## Stack

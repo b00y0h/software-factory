@@ -17,8 +17,8 @@ Where the repo is silent, write `unknown`.
 
 ## Read
 
-Your prompt gives you `SKILL_DIR`, `WORKTREE` (a checkout of the repo, on its base branch)
-and `FACTORY`. Read everything from `WORKTREE`.
+Your prompt gives you `SKILL_DIR`, `WORKTREE` (a checkout of the repo, on its base branch),
+`FACTORY`, and `BAYS` (the result of the factory's bay check). Read everything from `WORKTREE`.
 
 - The repo's own guidance: `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`, `README.md`, and an
   index of `docs/` if it exists. Agent instructions in the repo are the richest source of
@@ -79,6 +79,9 @@ and `FACTORY`. Read everything from `WORKTREE`.
 - **Spec approval**: default to `off`. Write `risky` when the repo's docs or CODEOWNERS show
   that changes to auth, data or CI need sign-off, and say which file shows it. The user can
   change it.
+- **Bays**: copy `BAYS` from your prompt as it is (`yes`, or `no: <reason>`), with the date
+  and the plugin version as evidence. You don't test it yourself; the orchestrator already
+  did. If your prompt has no `BAYS`, write `unknown`.
 - **CI shepherd**: `on` when CI runs on PRs or MRs and the CLI can read check results
   (`gh pr checks` or `glab ci`); otherwise `off`, with the reason. Write how long the slowest
   PR pipeline usually takes, if the CI history shows it (`gh run list --limit 20 --json

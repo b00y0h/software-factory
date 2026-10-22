@@ -156,9 +156,17 @@ order once accepted. `own` units are pushed and shepherded as soon as they're ac
 auto-merged), and units stacked on them don't wait for their PR to merge. A PRD or spec with
 several units can be given straight to `/factory`, and it runs as a plan.
 
-Without bays (an Agent tool with no `isolation` input), everything runs on the floor one job
-at a time, exactly as before, and work that wanted a bay waits for the floor's next free
-moment.
+**Bays are proven, not assumed.** `/factory init` runs a bay check: a tiny `bay-check` agent
+(haiku) in a worktree of its own checks out a commit, edits a file with Edit and Write,
+commits, and writes into the state folder. The orchestrator verifies each claim itself (the
+commit exists and holds the edit, the result file is there), cleans up, and records the answer
+in `project.md`'s *Bays* row, as `yes` or `no: <reason>`. Repos set up before this check get
+it once on their next command. If a bay still fails later, the session stops using bays and
+says so.
+
+Without bays (the check said no, or this session's Agent tool has no `isolation` input),
+everything runs on the floor one job at a time, exactly as before, and work that wanted a bay
+waits for the floor's next free moment.
 
 ## Accessibility: WCAG 2.2 AA on every UI change
 

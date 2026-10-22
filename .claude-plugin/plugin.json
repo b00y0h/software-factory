@@ -1,6 +1,6 @@
 {
   "name": "software-factory",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "A software factory in one command. /factory takes a feature, or every unit of an ADR in build order, through a spec (with an optional human gate), a build, parallel reviews (security, UX, UI, code, test quality with mutation checks, and WCAG 2.2 AA on UI changes) and an approver, then merges it or opens a preview PR, shepherds the PR until CI is green, and learns lessons from every job that needed a second try. Works in any repo; a live dashboard shows every job.",
   "author": { "name": "Bob Smith" },
   "repository": "https://github.com/b00y0h/software-factory",
