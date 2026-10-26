@@ -75,6 +75,24 @@ reviewer (WCAG 2.2 AA). Tests, stories and generated files never count.
 - Browser scan: <Playwright and axe-core in node_modules? yes or no>
 - Rendering UI locally for a scan: <how: dev server and page, or component + stylesheet>
 
+## Sentry
+
+How the factory watches Sentry, triages errors and fixes them (see the factory README). Write
+`off`, or remove this section, to turn it off. The token is never written here: it comes
+from `SENTRY_AUTH_TOKEN`, or `~/.factory/sentry.token` (chmod 600).
+
+- URL: `<https://sentry.example.com>` · Org: `<org slug>` · Projects: `<project slug>`, …
+- Environments watched: `production`
+- An incident is: level `error` or `fatal`, with at least `5` events and `1` user in the last
+  `24`h
+- Ignore errors whose title or culprit contains: `<pattern>`, …
+- Autonomy: `triage` (propose each fix; you start it with `/factory sentry fix <id>`) /
+  `fix` (start fix jobs on its own, most severe first, at most `3` a day) / `off`
+- Deploy lag: `2`h · Verify for: `24`h after the fix reaches production · Resolve in Sentry
+  after verifying: `yes`
+- Releases: <how a Sentry release maps to a commit here, e.g. "release is the git sha", or
+  "release is the tag `vX.Y.Z`">
+
 ## Rules that bite
 
 The repo's conventions a change most often breaks. The builder follows them and the code

@@ -33,6 +33,7 @@ on heavy commands such as test suites, and warn when two of them touch the same 
 /factory next                    run the first unchecked item in the backlog
 /factory approve <job-id>        accept a job that is waiting on a human (or approve its spec)
 /factory rework <job-id> <note>  send a job back to the builder (or its spec back) with feedback
+/factory sentry [fix|ignore <id>] triage Sentry errors, and fix or dismiss them
 /factory lessons                 list proposed lessons; then accept|reject <ids|all>
 ```
 

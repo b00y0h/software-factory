@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="factory-dashboard-version" content="13">
+<meta name="factory-dashboard-version" content="14">
 <title>Software Factory</title>
 <!--
   The factory's dashboard. The master copy lives in the software-factory plugin
@@ -107,6 +107,15 @@
   .human h2 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--alert); animation: pulse 1.6s ease-in-out infinite; }
   .human-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 10px; }
   .human-cards > .card { min-width: 0; }
+
+  /* ---------- Sentry incidents: errors the factory is triaging, fixing or verifying ---------- */
+  .incidents { margin: 0 24px 16px; padding: 14px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--border); }
+  .incidents h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+  .incidents h2 .inc-note { text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--faint); }
+  .inc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 10px; }
+  .inc-cards > .card { min-width: 0; }
+  .inc-cards > .card.done { opacity: .62; }
+  .inc-meta { margin-top: 6px; font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 10px; }
 
   /* ---------- ADR runs: one strip per run, a chip per unit ---------- */
   .runs { margin: 0 24px 16px; display: grid; gap: 10px; }
@@ -351,6 +360,11 @@
   <section id="human" class="human" hidden aria-label="Jobs that need a human">
     <h2><span class="dot"></span><span id="human-title">Needs a human</span></h2>
     <div id="human-cards" class="human-cards"></div>
+  </section>
+
+  <section id="incidents" class="incidents" hidden aria-label="Sentry incidents">
+    <h2><span id="inc-title">Sentry</span><span id="inc-quiet" class="inc-note"></span></h2>
+    <div id="inc-cards" class="inc-cards"></div>
   </section>
 
   <section id="runs" class="runs" hidden aria-label="ADR runs"></section>
@@ -864,6 +878,7 @@
     $('human').hidden = human.length === 0;
     $('human-title').textContent = human.length === 1 ? 'Needs a human · 1 job' : `Needs a human · ${human.length} jobs`;
     $('human-cards').innerHTML = human.map((j) => cardHtml(j, true)).join('');
+    renderIncidents();
 
     // ADR runs
     const runs = view.runs.slice().sort((a, b) => (RUN_ORDER[a.stage] ?? 0) - (RUN_ORDER[b.stage] ?? 0));
@@ -925,13 +940,17 @@
   // Every session writes only its own board/<id>.json; merge them all (plus a pre-0.3 board.json).
   let checkLegacy = true;   // a pre-0.3 board.json is looked for once, and only re-read if it exists
   async function loadState() {
-    const [projectText, listing, legacy] = await Promise.all([getText('project.json'), getText('board/'),
-      checkLegacy ? getText('board.json') : null]);
+    const [projectText, listing, legacy, incListing] = await Promise.all([getText('project.json'), getText('board/'),
+      checkLegacy ? getText('board.json') : null, getText('incidents/')]);
     if (legacy == null && (projectText != null || listing != null)) checkLegacy = false;
     if (projectText == null && listing == null && legacy == null) throw new Error('found no project.json, board/ or board.json');
     const names = listing ? [...new Set([...listing.matchAll(/href="([^"/?#]+\.json)"/g)].map((m) => decodeURIComponent(m[1])))].sort() : [];
     const texts = await Promise.all(names.map((n) => getText('board/' + encodeURIComponent(n))));
-    const merged = { project: null, runs: [], jobs: [], updated: null };
+    // Sentry incidents: one incidents/<id>.json each, written by sentry.py
+    const incNames = incListing ? [...new Set([...incListing.matchAll(/href="([^"/?#]+\.json)"/g)].map((m) => decodeURIComponent(m[1])))].sort() : [];
+    const incTexts = await Promise.all(incNames.map((n) => getText('incidents/' + encodeURIComponent(n))));
+    const merged = { project: null, runs: [], jobs: [], incidents: [], updated: null };
+    for (const t of incTexts) { try { if (t) merged.incidents.push(JSON.parse(t)); } catch { /* mid-write; next poll */ } }
     try { merged.project = projectText ? JSON.parse(projectText) : null; } catch { /* rewritten mid-read; next poll */ }
     const add = (doc) => {
       if (!merged.project && doc.project) merged.project = doc.project;
@@ -943,7 +962,7 @@
       if (!t) continue;
       try { add(JSON.parse(t)); } catch { /* a file mid-write; the next poll reads it */ }
     }
-    return { merged, key: [projectText, legacy, ...names.map((n, i) => n + '\n' + texts[i])].join('\u0000') };
+    return { merged, key: [projectText, legacy, ...names.map((n, i) => n + '\n' + texts[i]), ...incTexts].join('\u0000') };
   }
   async function poll() {
     try {
@@ -975,6 +994,65 @@
       const res = await fetch(`${base}/${path}`, { cache: 'no-store' });
       return res.ok ? await res.text() : null;
     } catch { return null; }
+  }
+
+  // ---------- Sentry incidents ----------
+  // What each factory state means on a card, and its badge tone. Settled ones (noise, duplicate,
+  // and anything resolved more than a week ago) only count in the header.
+  const INC_STATE = {
+    new: ['new · waiting for triage', 'accent'], triaging: ['triaging', 'accent'],
+    fix: ['fix ready', 'alert'], ask: ['needs you', 'alert'], recurred: ['came back after the fix', 'alert'],
+    fixing: ['fixing', 'accent'], verifying: ['verifying in production', 'accent'],
+    verified: ['fix held', 'pass'], resolved: ['resolved', 'pass'],
+  };
+  function incidentCard(inc) {
+    const s = inc.sentry || {}, f = inc.factory || {};
+    const [label, tone] = INC_STATE[f.state] || [f.state || 'new', 'accent'];
+    const link = s.link && /^https?:\/\//i.test(s.link) ? `<a href="${esc(s.link)}" target="_blank" rel="noopener" data-stop>Sentry</a>` : '';
+    const pr = f.pr && /^https?:\/\//i.test(f.pr) ? ` · <a href="${esc(f.pr)}" target="_blank" rel="noopener" data-stop>${prWord()}</a>` : '';
+    let line = label;
+    if (f.state === 'fixing' && f.job) line = `fixing in job ${f.job}`;
+    if (f.state === 'verifying' && f.until) line = `verifying in production until ${new Date(f.until).toLocaleString()}`;
+    const cmd = f.state === 'fix' ? `/factory sentry fix ${inc.id}` : f.state === 'ask' ? `/factory sentry ignore ${inc.id}`
+      : f.state === 'new' || f.state === 'recurred' ? '/factory sentry' : '';
+    const done = f.state === 'resolved' || f.state === 'verified';
+    return `<article class="card${done ? ' done' : ''}" tabindex="0" role="button" data-incident="${esc(inc.id)}" aria-label="${esc((s.title || inc.id) + ', ' + line)}">
+      <div class="card-top"><span class="card-id"><span class="unit-tag solo">${esc(s.level || 'error')}</span><span class="job-id">${esc(s.shortId || inc.id)}</span></span><span class="badge ${tone}">${esc(label)}</span></div>
+      <div class="card-title">${esc(s.title || inc.id)}</div>
+      <div class="state${tone === 'alert' ? ' alert' : ''}">${esc(line)}</div>
+      <div class="inc-meta"><span>${esc(String(s.events ?? '?'))} events</span><span>${esc(String(s.users ?? '?'))} users</span>${f.severity ? `<span>${esc(f.severity)} severity</span>` : ''}${s.culprit ? `<span class="mono" title="${esc(s.culprit)}">${esc(s.culprit)}</span>` : ''}</div>
+      ${cmd ? `<div class="cmds"><div class="cmd"><span>${esc(cmd)}</span><button class="copy" type="button" data-copy="${esc(cmd)}" data-stop>Copy</button></div></div>` : ''}
+      <div class="card-foot"><span>last seen <span data-ago="${esc(s.lastSeen || '')}">${esc(ago(s.lastSeen))}</span></span><span>${link}${pr}</span></div>
+    </article>`;
+  }
+  function renderIncidents() {
+    const all = board.incidents || [];
+    const weekAgo = Date.now() - 7 * 86400000;
+    const shown = all.filter((i) => {
+      const st = i.factory?.state || 'new';
+      if (st === 'noise' || st === 'duplicate') return false;
+      if (st === 'resolved' || st === 'verified') return new Date(i.factory?.resolvedAt || i.factory?.verifiedAt || i.factory?.updated || 0).getTime() > weekAgo;
+      return true;
+    });
+    const order = { recurred: 0, ask: 1, fix: 2, new: 3, triaging: 3, fixing: 4, verifying: 5, verified: 6, resolved: 6 };
+    const sev = { high: 0, medium: 1, low: 2 };
+    shown.sort((a, b) => (order[a.factory?.state] ?? 3) - (order[b.factory?.state] ?? 3)
+      || (sev[a.factory?.severity] ?? 1) - (sev[b.factory?.severity] ?? 1) || (b.sentry?.users || 0) - (a.sentry?.users || 0));
+    $('incidents').hidden = all.length === 0;
+    const open = shown.filter((i) => !['resolved', 'verified'].includes(i.factory?.state)).length;
+    const settled = all.filter((i) => ['noise', 'duplicate'].includes(i.factory?.state)).length;
+    const resolved = all.filter((i) => i.factory?.state === 'resolved').length;
+    $('inc-title').textContent = `Sentry · ${open} open`;
+    $('inc-quiet').textContent = [resolved ? `${resolved} resolved by the factory` : '', settled ? `${settled} dismissed as noise or duplicates` : '',
+      board.project?.sentry?.autonomy ? `autonomy: ${board.project.sentry.autonomy}` : ''].filter(Boolean).join(' · ');
+    $('inc-cards').innerHTML = shown.map(incidentCard).join('') || '<p class="muted">Nothing open. The factory is watching.</p>';
+  }
+  function openIncident(id) {
+    const inc = (board.incidents || []).find((i) => i.id === id);
+    if (!inc) return;
+    const base = `incidents/${encodeURIComponent(id)}`;
+    openDocs({ key: 'inc:' + id, meta: `${inc.sentry?.shortId || id} · ${inc.factory?.state || 'new'}`, title: inc.sentry?.title || id,
+      base, files: [['triage.md', 'Triage']], read: (p) => (DEMO ? demoIncidentFile(inc) : readFile(base, p)) });
   }
 
   // ---------- drawer: a job's or a run's markdown ----------
@@ -1036,7 +1114,7 @@
       document.querySelectorAll('#tabs .tab').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.file === String(i))));
       let text = f.text; let head = '';
       const vm = text.match(/^\s*VERDICT:\s*(PASS|CHANGES)\s*\n?/i);
-      const dm = !vm && text.match(/^\s*(APPROVE|ESCALATE|GREEN|FIX|RERUN|WAIT|ASK)\s*\n?/);
+      const dm = !vm && text.match(/^\s*(APPROVE|ESCALATE|GREEN|FIX|RERUN|WAIT|ASK|NOISE|DUPLICATE[^\n]*)\s*\n?/);
       if (vm) { head = `<div class="verdict ${verdictOf(vm[1])}">VERDICT: ${esc(vm[1].toUpperCase())}</div>`; text = text.slice(vm[0].length); }
       if (dm) { head = `<div class="verdict ${dm[1] === 'APPROVE' || dm[1] === 'GREEN' ? 'pass' : 'changes'}">${esc(dm[1])}</div>`; text = text.slice(dm[0].length); }
       $('doc').innerHTML = `<div class="doc-path">${esc(base)}/${esc(f.path)}</div>${head}<div class="md">${md(text)}</div>`;
@@ -1064,6 +1142,8 @@
     if (unit) { openDrawer(unit.dataset.openJob); return; }
     const run = e.target.closest('[data-open-run]');
     if (run) { openRun(run.dataset.openRun); return; }
+    const inc = e.target.closest('[data-incident]');
+    if (inc) { openIncident(inc.dataset.incident); return; }
     const card = e.target.closest('[data-job]');
     if (card) openDrawer(card.dataset.job);
   });
@@ -1072,6 +1152,8 @@
     if (e.target.closest?.('[data-stop], summary, button, a')) return;   // let them handle their own keys
     const card = e.target.closest?.('[data-job]');
     if (card && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openDrawer(card.dataset.job); }
+    const inc = e.target.closest?.('[data-incident]');
+    if (inc && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openIncident(inc.dataset.incident); }
   });
   $('close').onclick = closeDrawer;
   $('scrim').onclick = closeDrawer;
@@ -1099,7 +1181,17 @@
     const unitJob = (run, unit, slug, title, extra) => ({ ...job('', '', title, extra), id: `${run.split('-')[0]}-${unit.toLowerCase()}-${slug}`,
       run, unit, branch: `feature/${run}` });
     return {
-      project: { name: 'Sample project', host: 'github', merge: 'auto-merge' },
+      project: { name: 'Sample project', host: 'github', merge: 'auto-merge', sentry: { autonomy: 'triage' } },
+      incidents: [
+        { id: '901', sentry: { shortId: 'SAMPLE-1A', title: "TypeError: Cannot read properties of undefined (reading 'recipeId')", culprit: 'apps/email/compose.ts in buildDraft',
+          level: 'error', events: 42, users: 7, lastSeen: at(6), link: null }, factory: { state: 'fix', severity: 'high' } },
+        { id: '902', sentry: { shortId: 'SAMPLE-1B', title: 'TimeoutError: upstream ACS call exceeded 30s', culprit: 'apps/api/src/acs/client.ts',
+          level: 'error', events: 15, users: 4, lastSeen: at(20), link: null }, factory: { state: 'ask', severity: 'medium' } },
+        { id: '903', sentry: { shortId: 'SAMPLE-1C', title: 'RangeError: Invalid time value', culprit: 'apps/web/src/report/format.ts',
+          level: 'error', events: 9, users: 3, lastSeen: at(300), link: null }, factory: { state: 'verifying', job: '008-locale-date-format', until: at(-600) } },
+        { id: '904', sentry: { shortId: 'SAMPLE-1D', title: 'ResizeObserver loop completed with undelivered notifications', level: 'error', events: 300, users: 80 },
+          factory: { state: 'noise' } },
+      ],
       runs: [{
         // already shipped: it lives in the Shipped list, not on the board
         id: '0003-sitemap-freshness', title: 'ADR-0003 Sitemap freshness (sample)', branch: 'feature/0003-sitemap-freshness',
@@ -1289,6 +1381,13 @@
         : `GREEN\nChecked-SHA: 0000000 (demo)\n\n## Items\nNothing failed on the pushed commit, and no review comment needs anything.`;
     }
     return null;
+  }
+
+  function demoIncidentFile(inc) {
+    const st = inc.factory?.state;
+    if (st === 'new' || st === 'triaging') return null;
+    const line1 = { fix: 'FIX', ask: 'ASK', noise: 'NOISE' }[st] || 'FIX';
+    return `${line1}\nSeverity: ${inc.factory?.severity || 'medium'}: sample triage from demo mode\nRelease: 1.4.2 · Commit: 0000000\n\n## What happens\n${inc.sentry?.title}. A sample incident; the real triager explains who hits it and what they see.\n\n## Root cause\n\`${(inc.sentry?.culprit || 'src/…').split(' ')[0]}:88\`: where the bad value comes from.\n\n## Fix brief\n- **AC-1** A test reproduces the Sentry error and fails before the fix.`;
   }
 
   function demoRunFile(run, path) {

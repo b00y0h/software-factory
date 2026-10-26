@@ -45,6 +45,20 @@ ensure_sweep() {
 }
 ensure_sweep || true
 
+# And one Sentry poller, when the profile watches Sentry and a token is available (see
+# sentry.py). It records new errors for triage, and verifies and resolves fixed ones.
+ensure_sentry() {
+  local pidfile="$state/.sentry.pid" here
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ -s "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then return 0; fi
+  python3 -c 'import json,sys; s=(json.load(open(sys.argv[1])).get("sentry") or {}); sys.exit(0 if s.get("url") and s.get("autonomy","triage")!="off" else 1)' \
+    "$state/project.json" 2>/dev/null || return 0
+  [ -n "${SENTRY_AUTH_TOKEN:-}" ] || [ -s "$HOME/.factory/sentry.token" ] || return 0
+  nohup python3 "$here/sentry.py" poll "$state" >>"$state/sentry.log" 2>&1 &
+  echo $! > "$pidfile"
+}
+ensure_sentry || true
+
 # The link another session recorded, if that server is still up.
 if [ -s "$state/dashboard.url" ] && serves_us "$(cat "$state/dashboard.url")"; then
   report running "$(cat "$state/dashboard.url")"; exit 0

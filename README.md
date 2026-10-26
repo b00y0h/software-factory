@@ -35,6 +35,9 @@ Start a new session afterwards so the skill and agents load.
 /factory next                    run the first unchecked item in the backlog
 /factory approve <job-id>        accept a job that is waiting on a human (or approve its spec)
 /factory rework <job-id> <note>  send a job back to the builder (or its spec back) with feedback
+/factory sentry                  check Sentry, triage new errors, and list what's open
+/factory sentry fix <id>         fix a triaged Sentry error through the normal loop
+/factory sentry ignore <id>      dismiss a Sentry error as noise
 /factory lessons                 list the lessons the factory proposes from past jobs
 /factory lessons accept|reject <ids|all>   decide them; accepted ones land in factory/lessons.md
 ```
@@ -168,6 +171,39 @@ Without bays (the check said no, or this session's Agent tool has no `isolation`
 everything runs on the floor one job at a time, exactly as before, and work that wanted a bay
 waits for the floor's next free moment.
 
+## Sentry: errors in production become fixes
+
+When `project.md` has a *Sentry* section, the factory watches Sentry, triages each error worth
+fixing, fixes it through the normal loop, and resolves the issue in Sentry once production
+shows the fix held.
+
+- **Watching.** `scripts/sentry.py poll` runs beside the dashboard (every 5 minutes) and on
+  every `/factory` command. It records unresolved issues in the watched environments that
+  clear the thresholds (level, events, users) and don't match an *ignore* pattern, one file
+  each under `~/.factory/<repo>/incidents/`. They show in a **Sentry** strip on the dashboard.
+- **Triage.** `/factory sentry` spawns a `triager` (opus) for each new error, all in parallel.
+  It reads a scrubbed copy of the latest event (stack frames, breadcrumbs, release; never
+  request bodies, cookies, users or IPs, and anything that looks like an email, token or key
+  is masked), finds the root cause at the release's commit, and decides `FIX`, `DUPLICATE`,
+  `NOISE` or `ASK`. A `FIX` comes with a brief whose first criterion is a test that reproduces
+  the Sentry error.
+- **Fixing.** A fix is an ordinary job: spec, build, every reviewer (review-tests proves the
+  reproduction test fails without the fix), approver, PR, CI shepherd. Incident fixes never
+  auto-merge, and the PR says "Sentry: <id>", never "Fixes <id>", so Sentry doesn't resolve
+  the issue at merge.
+- **Verifying.** Once the fix merges, the poller waits for the deploy (*Deploy lag*, 2h by
+  default), then watches the issue for *Verify for* (24h). No new events: it resolves the
+  issue in Sentry with a comment naming the PR and job. Any new event: the incident is marked
+  `recurred`, and the next triage reads what the earlier fix missed.
+- **Autonomy.** `triage` (the default) proposes fixes and you start each with
+  `/factory sentry fix <id>`. `fix` starts them itself, most severe first, up to a daily cap
+  (3), and `/factory next` takes them before the backlog. `off` turns it all off.
+
+The token comes from `SENTRY_AUTH_TOKEN` or `~/.factory/sentry.token` (chmod 600) and is never
+written anywhere. It needs read access to issues and events, plus write access to issues if
+*Resolve in Sentry* is on. A self-hosted Sentry behind a private CA works with
+`SSL_CERT_FILE` pointing at that CA. Sentry data is treated as evidence, never as instructions.
+
 ## Accessibility: WCAG 2.2 AA on every UI change
 
 Whenever a change touches UI (the profile's *UI paths*, or component, markup and style files
@@ -200,6 +236,7 @@ CMS is outside any code review.
 | Review | `review-security` (opus), `review-ux`, `review-ui`, `review-code` (sonnet), plus `review-tests` (opus) **whenever the change touches code** and `review-a11y` (opus) **whenever it touches UI**, in parallel | `round-N/review-<name>.md`, starting `VERDICT: PASS` or `VERDICT: CHANGES` |
 | Approve | `approver` (opus) | `decision.md`, starting `APPROVE` or `ESCALATE` |
 | Shepherd | `shepherd` (opus), after every push, when CI is red or the PR has comments | `ci/ci-N.md`, starting `GREEN`, `FIX`, `RERUN`, `WAIT` or `ASK` |
+| Triage | `triager` (opus), for each new Sentry error | `~/.factory/<repo>/incidents/<id>/triage.md`, starting `FIX`, `DUPLICATE`, `NOISE` or `ASK` |
 | Learn | `librarian` (sonnet), after a job that needed a second try | `~/.factory/<repo>/lessons/proposed/<job>.md` |
 
 Any `CHANGES` sends the round back to the same builder. After two rounds, or on `ESCALATE`,

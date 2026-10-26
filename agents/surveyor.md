@@ -91,6 +91,14 @@ Your prompt gives you `SKILL_DIR`, `WORKTREE` (a checkout of the repo, on its ba
   there is none, write `none`: the reviewer then makes mutants by hand. Work out the cheapest
   way to make a fresh `git worktree` able to run a single test file (linking `node_modules`,
   a shared virtualenv, a Gradle cache), and the globs for test files.
+- **Sentry**: whether the app reports to Sentry (`@sentry/*` or `sentry_sdk` in the
+  manifests, `Sentry.init`, `SENTRY_DSN`, `.sentryclirc`, `sentry.properties`, a
+  `sentry-cli` step in CI). If it does, fill the *Sentry* section: the URL (the DSN's host or
+  `.sentryclirc`'s `url`), the org and project slugs (from `.sentryclirc`, CI variables like
+  `SENTRY_ORG`/`SENTRY_PROJECT`, or the build config), and how releases are named (from the
+  `sentry-cli releases` step or the SDK's `release` option). Never copy a DSN's key or any
+  token into the profile. Default autonomy to `triage`, environments to `production`, and the
+  thresholds to the template's. If the app doesn't use Sentry, write `off`.
 - **ADR runs**: the branch rule for a whole-ADR run, which ships as one PR. If previews are
   triggered by a prefix, use that prefix, so the run gets one. Also say whether the PR opens
   as a draft. Default to a draft when the host supports it and nothing in CI skips drafts.

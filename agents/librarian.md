@@ -37,7 +37,7 @@ contains a secret, a token, a personal name beyond a reviewer's handle, or custo
 
 Each lesson has a **role tag**: the agent it is for (`spec-writer`, `builder`,
 `review-security`, `review-ux`, `review-ui`, `review-code`, `review-a11y`, `review-tests`,
-`approver`, `shepherd`), or `all`.
+`approver`, `shepherd`, `triager`), or `all`.
 
 ## MODE=propose
 
