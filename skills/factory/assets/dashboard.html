@@ -3,16 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="factory-dashboard-version" content="14">
+<meta name="factory-dashboard-version" content="15">
 <title>Software Factory</title>
 <!--
-  The factory's dashboard. The master copy lives in the software-factory plugin
-  (skills/factory/assets/) and is copied into each repo's state folder, ~/.factory/<repo>/,
-  on every run, so edit it there. Self-contained: no build step, no network beyond this folder.
-  /factory serves this folder itself (skills/factory/scripts/dashboard.sh). By hand:
-  python3 -m http.server 8765 --bind 127.0.0.1 --directory ~/.factory/<repo>
-  Then open:          http://localhost:8765/dashboard.html   (add ?demo to see sample data)
-  It polls board.json (written only by the /factory orchestrator) and reads job markdown on click.
+  The factory's dashboard, for every repo on this machine. The master copy lives in the
+  software-factory plugin (skills/factory/assets/) and is copied to the factory home,
+  ~/.factory/dashboard.html, so edit it there. Self-contained: no build step, no network.
+  /factory serves it through the hub (skills/factory/scripts/hub.py, started by dashboard.sh),
+  which serves every repo's state folder, ~/.factory/<repo>/, from one port:
+    http://localhost:8765/dashboard.html            every project, and what needs you
+    http://localhost:8765/dashboard.html#/p/<repo>  one project's board
+  Add ?demo to see sample data. Served straight from one state folder instead (no hub), it
+  shows just that project. It polls board/*.json (each written only by the session that owns
+  it) and reads job markdown on click.
 -->
 <style>
   :root {
@@ -92,6 +95,47 @@
     border: 1px solid var(--border); background: var(--surface); border-radius: 8px;
     width: 30px; height: 30px; display: grid; place-items: center; cursor: pointer; color: var(--muted);
   }
+
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .brand-link { color: inherit; text-decoration: none; }
+  .brand-link:hover h1 { text-decoration: underline; }
+  .brand-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+  /* the project menu: every repo the hub serves, and what each is doing */
+  .switch select {
+    font: inherit; font-size: 13px; color: var(--text); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px; padding: 4px 8px; max-width: min(340px, 70vw); min-height: 30px; cursor: pointer;
+  }
+  .switch select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---------- all projects: one tile per repo ---------- */
+  .overview { margin: 0 24px 20px; }
+  .overview > h2, .human .ov-h { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .ov-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 12px; }
+  .proj {
+    display: flex; flex-direction: column; gap: 8px; min-width: 0; color: inherit; text-decoration: none;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; box-shadow: var(--shadow);
+    transition: box-shadow .15s;
+  }
+  .proj:hover { box-shadow: var(--shadow-lift); }
+  .proj:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .proj.s-needs-you { border-color: var(--alert-line); }
+  .proj-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .proj-name { font-weight: 650; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .proj-repo { font-family: var(--mono); font-size: 11.5px; color: var(--faint); margin-top: -6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .proj-stats { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12.5px; color: var(--muted); }
+  .proj-stats b { color: var(--text); font-variant-numeric: tabular-nums; }
+  .proj-stats .alert, .proj-stats .alert b { color: var(--alert); }
+  .proj-list { display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 0; list-style: none; font-size: 12.5px; }
+  .proj-list li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .proj-list .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+  .proj-list .stage { font: 600 10.5px/1.4 var(--mono); color: var(--accent); background: var(--accent-bg); padding: 1px 6px; border-radius: 5px; flex: none; }
+  .proj-list .meter { flex: none; width: 64px; height: 4px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
+  .proj-list .meter > i { display: block; height: 100%; background: var(--pass); }
+  .proj-list .of { flex: none; font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .proj-foot { margin-top: auto; padding-top: 4px; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--faint); }
+  .proj-quiet { font-size: 12.5px; color: var(--faint); }
+  a.card { display: block; color: inherit; text-decoration: none; }
+  .proj-tag { font: 600 10.5px var(--mono); color: var(--muted); background: var(--surface-2); padding: 1px 6px; border-radius: 5px; flex: 0 1 auto; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .banner { margin: 0 24px 12px; padding: 9px 14px; border-radius: 10px; font-size: 13px; }
   .banner.demo { background: var(--accent-bg); color: var(--text); }
@@ -321,7 +365,7 @@
 
   @media (max-width: 760px) {
     .top { padding: 16px 16px 10px; }
-    .banner, .human, .runs, .history { margin-left: 16px; margin-right: 16px; }
+    .banner, .human, .runs, .history, .incidents, .overview { margin-left: 16px; margin-right: 16px; }
     .hist { grid-template-columns: auto minmax(0, 1fr) auto; }
     .hist .hist-meta { grid-column: 2 / -1; }
     .hist-hint { display: none; }
@@ -336,7 +380,7 @@
 </head>
 <body>
   <header class="top">
-    <div class="brand">
+    <a class="brand brand-link" id="brand" href="#/" aria-label="Software factory: all projects">
       <div class="logo" aria-hidden="true">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20V9l6 4V9l6 4V4h6v16z"/><path d="M6 17h2M11 17h2M16 17h2"/></svg>
       </div>
@@ -344,8 +388,9 @@
         <h1>Software factory</h1>
         <p class="sub" id="sub">feature → spec → build → reviews → approve → merge → CI green</p>
       </div>
-    </div>
+    </a>
     <div class="status">
+      <label class="switch" id="switch" hidden><span class="sr-only">Project</span><select id="project-switch"></select></label>
       <span id="counts"></span>
       <span id="live" class="live"><i></i><span>Connecting…</span></span>
       <button id="theme" class="theme-toggle" type="button" aria-label="Toggle light and dark theme" title="Toggle theme">◐</button>
@@ -356,6 +401,16 @@
     Sample data with a simulated loop. This is not your board. <a href="?">Show the real board</a>
   </div>
   <div id="error" class="banner error" hidden></div>
+
+  <section id="ov-human" class="human" hidden aria-label="Work that needs a human, in every project">
+    <h2><span class="dot"></span><span id="ov-human-title">Needs a human</span></h2>
+    <div id="ov-human-cards" class="human-cards"></div>
+  </section>
+
+  <section id="overview" class="overview" hidden aria-label="All projects">
+    <h2 id="ov-title">Projects</h2>
+    <div id="ov-grid" class="ov-grid"></div>
+  </section>
 
   <section id="human" class="human" hidden aria-label="Jobs that need a human">
     <h2><span class="dot"></span><span id="human-title">Needs a human</span></h2>
@@ -444,6 +499,15 @@
 
   const $ = (id) => document.getElementById(id);
   const DEMO = new URLSearchParams(location.search).has('demo');
+  // Served by the hub (hub.py), one page shows every repo: #/ is the overview, #/p/<repo> one
+  // project's board, and #/p/<repo>/job/<id> (or /run/<id>) opens that job too. Served straight
+  // from one state folder, there is no hub, and the page shows just that project.
+  let HUB = false;
+  let PROJECT = null;    // the repo on screen, or null for the overview
+  let P = '';            // the prefix every state path is read through: '' or 'p/<repo>/'
+  let projects = [];     // the hub's summary of every repo
+  let projectsAt = null;
+  let pendingOpen = null;
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // ---------- small helpers ----------
@@ -852,6 +916,8 @@
   }
 
   function render() {
+    showView();
+    if (HUB && !PROJECT) { renderOverview(); return; }
     const firstPos = new Map();
     document.querySelectorAll('[data-job]').forEach((el) => firstPos.set(el.dataset.job, el.getBoundingClientRect()));
 
@@ -870,9 +936,10 @@
     // counts
     const running = jobs.filter((j) => ACTIVE.has(j.stage)).length;
     $('counts').textContent = `${running} running · ${human.length} need${human.length === 1 ? 's' : ''} you · ${view.history.length} shipped`;
-    const name = board.project?.name;
+    const name = board.project?.name || PROJECT;
     $('sub').textContent = (name ? name + ' · ' : '') + 'feature → spec → build → reviews → approve → merge → CI green';
     document.title = name ? `${name} · Software Factory` : 'Software Factory';
+    renderSwitch();
 
     // needs-human strip
     $('human').hidden = human.length === 0;
@@ -936,7 +1003,7 @@
       .map((l) => l.match(/^\s*[-*]\s+\[ \]\s+(.+)$/)).filter(Boolean).map((m) => m[1].trim());
   }
   let lastBacklogFetch = 0;
-  const getText = (path) => fetch(path, { cache: 'no-store' }).then((r) => (r.ok ? r.text() : null)).catch(() => null);
+  const getText = (path) => fetch(P + path, { cache: 'no-store' }).then((r) => (r.ok ? r.text() : null)).catch(() => null);
   // Every session writes only its own board/<id>.json; merge them all (plus a pre-0.3 board.json).
   let checkLegacy = true;   // a pre-0.3 board.json is looked for once, and only re-read if it exists
   async function loadState() {
@@ -965,35 +1032,170 @@
     return { merged, key: [projectText, legacy, ...names.map((n, i) => n + '\n' + texts[i]), ...incTexts].join('\u0000') };
   }
   async function poll() {
+    if (HUB && !PROJECT) return;   // the overview reads the hub's summary instead
+    const asked = PROJECT;
     try {
       const { merged: next, key: stateKey } = await loadState();
+      if (asked !== PROJECT) return;   // switched project mid-read
       if (Date.now() - lastBacklogFetch > 8000) {
         lastBacklogFetch = Date.now();
-        try {
-          const b = await fetch('backlog.md', { cache: 'no-store' });
-          backlog = b.ok ? parseBacklog(await b.text()) : [];
-        } catch { /* backlog is optional */ }
+        const b = await getText('backlog.md');   // optional
+        backlog = b != null ? parseBacklog(b) : [];
       }
       $('error').hidden = true;
       setLive(true, next.updated ? 'Live · updated ' + ago(next.updated) : 'Live');
       const key = stateKey + '|' + backlog.join('\n');
       if (key !== lastKey) { lastKey = key; board = next; render(); }
+      openPending();
     } catch (err) {
+      if (asked !== PROJECT) return;
       setLive(false, 'Offline');
       const e = $('error');
       e.hidden = false;
       e.innerHTML = location.protocol === 'file:'
         ? 'Open this page through a server so it can read the factory state: <code>python3 -m http.server 8765 --bind 127.0.0.1 --directory ~/.factory/&lt;repo&gt;</code>, then <code>http://localhost:8765/dashboard.html</code>.'
-        : `Can't read the factory state (${esc(err.message)}). Retrying…`;
+        : HUB && !projects.some((p) => p.id === PROJECT)
+          ? `There is no project called <code>${esc(PROJECT)}</code> on this machine. <a href="#/">See every project</a>.`
+          : `Can't read the factory state (${esc(err.message)}). Retrying…`;
       if (firstRender) render();
     }
   }
 
   async function readFile(base, path) {
     try {
-      const res = await fetch(`${base}/${path}`, { cache: 'no-store' });
+      const res = await fetch(`${P}${base}/${path}`, { cache: 'no-store' });
       return res.ok ? await res.text() : null;
     } catch { return null; }
+  }
+
+  // ---------- every project: the hub's overview and the project menu ----------
+  const BOARD_PARTS = ['human', 'incidents', 'runs', 'board', 'history'];
+  function showView() {
+    const overview = HUB && !PROJECT;
+    $('overview').hidden = !overview;
+    if (overview) for (const id of BOARD_PARTS) $(id).hidden = true;
+    else { $('board').hidden = false; $('ov-human').hidden = true; }
+  }
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
+  const STATUS = { 'needs-you': ['Needs you', 'alert'], running: ['Running', 'accent'], idle: ['Idle', ''] };
+  const STATUS_ORDER = { 'needs-you': 0, running: 1, idle: 2 };
+  const sortedProjects = () => projects.slice().sort((a, b) => (STATUS_ORDER[a.status] ?? 3) - (STATUS_ORDER[b.status] ?? 3)
+    || String(b.updated || '').localeCompare(String(a.updated || '')) || a.id.localeCompare(b.id));
+  const projectLink = (id, rest = '') => `#/p/${encodeURIComponent(id)}${rest}`;
+  function gateText(h) {
+    if (h.kind === 'run') return h.gate === 'plan' ? 'run plan waiting for your approval' : 'run paused · waiting on you';
+    return h.gate === 'spec' ? 'spec waiting for your approval' : h.gate === 'ci' ? 'CI needs you' : 'waiting on you';
+  }
+  function humanCard(p, h) {
+    const tag = h.unit && h.run ? `${h.run.split('-')[0]} · ${h.unit}` : h.kind === 'run' ? 'ADR run' : 'one-off';
+    const cmd = h.kind === 'run' ? `/factory continue ${h.id}` : `/factory approve ${h.id}`;
+    return `<a class="card" href="${projectLink(p.id, `/${h.kind}/${encodeURIComponent(h.id)}`)}">
+      <div class="card-top"><div class="card-id"><span class="proj-tag">${esc(p.name)}</span><span class="unit-tag solo">${esc(tag)}</span></div></div>
+      <div class="card-title">${esc(h.title)}</div>
+      <div class="state alert">${esc(gateText(h))}</div>
+      <div class="card-foot"><span class="mono">${esc(cmd)}</span><span>open →</span></div>
+    </a>`;
+  }
+  function tileHtml(p) {
+    const [label, tone] = STATUS[p.status] || STATUS.idle;
+    const stat = (n, what, alert) => (n ? `<span class="${alert ? 'alert' : ''}"><b>${n}</b> ${esc(what)}</span>` : '');
+    const stats = [stat(p.running.length, 'running'), stat(p.human.length, p.human.length === 1 ? 'needs you' : 'need you', true),
+      stat(p.ci.red.length, 'CI red', true), stat(p.ci.pending, 'CI running'),
+      stat(p.incidents.open, 'Sentry open', p.incidents.alert > 0), stat(p.backlog, 'in backlog')].join('');
+    const runs = p.runs.map((r) => {
+      const pct = r.units ? Math.round((100 * r.done) / r.units) : 0;
+      return `<li><span class="stage">${esc(r.stage || '')}</span><span class="t">${esc(r.title)}</span>
+        <span class="meter" role="img" aria-label="${r.done} of ${r.units} units done"><i style="width:${pct}%"></i></span><span class="of">${r.done}/${r.units}</span></li>`;
+    });
+    const loose = p.running.filter((j) => !j.run).slice(0, 4).map((j) =>
+      `<li><span class="stage">${esc(j.stage)}</span><span class="t">${esc(j.title)}</span>${j.bay ? '<span class="bay-tag">bay</span>' : ''}</li>`);
+    const list = [...runs, ...loose];
+    const more = p.running.filter((j) => !j.run).length - loose.length;
+    const name = p.name && p.name !== p.id ? p.name : p.id;
+    return `<a class="proj s-${esc(p.status)}" href="${projectLink(p.id)}">
+      <div class="proj-head"><span class="proj-name">${esc(name)}</span>${tone ? `<span class="badge ${tone}">${label}</span>` : `<span class="muted">${label}</span>`}</div>
+      ${name !== p.id ? `<div class="proj-repo">~/.factory/${esc(p.id)}</div>` : ''}
+      ${stats ? `<div class="proj-stats">${stats}</div>` : '<div class="proj-quiet">Nothing running.</div>'}
+      ${list.length ? `<ul class="proj-list">${list.join('')}${more > 0 ? `<li class="muted">and ${more} more</li>` : ''}</ul>` : ''}
+      <div class="proj-foot">${p.sessions ? `<span>${plural(p.sessions, 'session')} working</span>` : ''}
+        <span>${p.updated ? `moved <span data-ago="${esc(p.updated)}">${esc(ago(p.updated))}</span>` : 'never run'}</span>
+        <span>${p.shipped} shipped</span>${p.plugin ? `<span>plugin ${esc(p.plugin)}</span>` : ''}</div>
+    </a>`;
+  }
+  function renderOverview() {
+    const all = sortedProjects();
+    const human = all.flatMap((p) => p.human.map((h) => ({ p, h })));
+    const running = all.reduce((n, p) => n + p.running.length, 0);
+    $('counts').textContent = `${running} running · ${human.length} need${human.length === 1 ? 's' : ''} you · ${plural(all.length, 'project')}`;
+    $('sub').textContent = 'every project on this machine';
+    document.title = human.length ? `(${human.length}) Software Factory` : 'Software Factory';
+    $('ov-human').hidden = human.length === 0;
+    $('ov-human-title').textContent = `Needs a human · ${plural(human.length, 'item')} across ${plural(new Set(human.map((x) => x.p.id)).size, 'project')}`;
+    $('ov-human-cards').innerHTML = human.map(({ p, h }) => humanCard(p, h)).join('');
+    $('ov-title').textContent = `Projects · ${all.length}`;
+    $('ov-grid').innerHTML = all.map(tileHtml).join('') || `<div class="quiet"><strong>No projects yet.</strong>
+      Run <code>/factory init</code> in a repo, and it shows up here.<p><a href="?demo">See it running with sample data →</a></p></div>`;
+    renderSwitch();
+  }
+  let switchKey = '';
+  function renderSwitch() {
+    if (!HUB) return;
+    $('switch').hidden = false;
+    const label = (p) => [p.name && p.name !== p.id ? p.name : p.id,
+      p.human.length ? `${p.human.length} need${p.human.length === 1 ? 's' : ''} you` : '',
+      p.running.length ? `${p.running.length} running` : ''].filter(Boolean).join(' · ');
+    const opts = [['', `All projects (${projects.length})`], ...sortedProjects().map((p) => [p.id, label(p)])];
+    if (PROJECT && !projects.some((p) => p.id === PROJECT)) opts.push([PROJECT, PROJECT]);
+    const key = opts.map((o) => o.join('=')).join('|') + '#' + (PROJECT || '');
+    if (key === switchKey) return;   // rebuilding an open menu closes it, so only when it changed
+    switchKey = key;
+    $('project-switch').innerHTML = opts.map(([v, t]) => `<option value="${esc(v)}"${v === (PROJECT || '') ? ' selected' : ''}>${esc(t)}</option>`).join('');
+  }
+  async function pollProjects() {
+    try {
+      const r = await fetch('api/projects', { cache: 'no-store' });
+      if (!r.ok) throw new Error('the hub answered ' + r.status);
+      const data = await r.json();
+      projects = data.projects || [];
+      projectsAt = data.updated;
+      if (!PROJECT) { $('error').hidden = true; setLive(true, 'Live · every project'); render(); }
+      else renderSwitch();
+    } catch (err) {
+      if (PROJECT) return;   // the board's own poll reports a hub that's down
+      setLive(false, 'Offline');
+      $('error').hidden = false;
+      $('error').innerHTML = `Can't reach the factory hub (${esc(err.message)}). Retrying…`;
+    }
+  }
+  // The route is the hash: #/, #/p/<repo>, #/p/<repo>/job/<id>, #/p/<repo>/run/<id>.
+  function route() {
+    const m = location.hash.match(/^#\/p\/([^/]+)(?:\/(job|run)\/([^/]+))?/);
+    const next = m ? decodeURIComponent(m[1]) : null;
+    pendingOpen = m && m[2] ? { kind: m[2], id: decodeURIComponent(m[3]) } : null;
+    if (next !== PROJECT) {
+      if (openKey) closeDrawer();
+      PROJECT = next;
+      P = DEMO || !next ? '' : `p/${encodeURIComponent(next)}/`;
+      board = { jobs: [] }; backlog = []; lastKey = ''; firstRender = true; lastBacklogFetch = 0;
+      $('error').hidden = true;
+      $('board').innerHTML = '';
+      if (DEMO) demoShow();
+      else if (PROJECT) { setLive(true, 'Connecting…'); poll(); }
+      else setLive(true, 'Live · every project');
+      renderSwitch();
+    }
+    render();
+    if (DEMO) openPending();
+  }
+  // A link to a job or run opens it once the board has it, then the hash goes back to the board.
+  function openPending() {
+    if (!pendingOpen || !PROJECT) return;
+    const { kind, id } = pendingOpen;
+    const found = kind === 'run' ? (board.runs || []).some((r) => r.id === id) : (board.jobs || []).some((j) => j.id === id);
+    if (!found) return;
+    pendingOpen = null;
+    history.replaceState(null, '', projectLink(PROJECT));
+    if (kind === 'run') openRun(id); else openDrawer(id);
   }
 
   // ---------- Sentry incidents ----------
@@ -1117,7 +1319,7 @@
       const dm = !vm && text.match(/^\s*(APPROVE|ESCALATE|GREEN|FIX|RERUN|WAIT|ASK|NOISE|DUPLICATE[^\n]*)\s*\n?/);
       if (vm) { head = `<div class="verdict ${verdictOf(vm[1])}">VERDICT: ${esc(vm[1].toUpperCase())}</div>`; text = text.slice(vm[0].length); }
       if (dm) { head = `<div class="verdict ${dm[1] === 'APPROVE' || dm[1] === 'GREEN' ? 'pass' : 'changes'}">${esc(dm[1])}</div>`; text = text.slice(dm[0].length); }
-      $('doc').innerHTML = `<div class="doc-path">${esc(base)}/${esc(f.path)}</div>${head}<div class="md">${md(text)}</div>`;
+      $('doc').innerHTML = `<div class="doc-path">${PROJECT ? esc(PROJECT) + ' · ' : ''}${esc(base)}/${esc(f.path)}</div>${head}<div class="md">${md(text)}</div>`;
       $('doc').scrollTop = 0;
     };
     $('tabs').onclick = (e) => { const b = e.target.closest('[data-file]'); if (b) show(Number(b.dataset.file)); };
@@ -1156,6 +1358,8 @@
     if (inc && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openIncident(inc.dataset.incident); }
   });
   $('close').onclick = closeDrawer;
+  $('project-switch').onchange = (e) => { location.hash = e.target.value ? projectLink(e.target.value) : '#/'; };
+  window.addEventListener('hashchange', () => { if (HUB) route(); });
   $('scrim').onclick = closeDrawer;
   $('theme').onclick = () => {
     const root = document.documentElement;
@@ -1298,7 +1502,73 @@
       }
     }
   }
+  // Demo projects: the simulated loop runs in the first; the other two hold still, so the
+  // overview has something in every state.
+  const DEMO_LIVE = 'sample-shop';
+  let demoLive = null;   // the simulated board, kept while another demo project is on screen
+  function demoStatic(id) {
+    const at = (min) => new Date(Date.now() - min * 60000).toISOString();
+    const reviews = { security: 'PASS', ux: 'PASS', ui: 'PASS', code: 'PASS', tests: 'PASS' };
+    const shipped = (n, slug, title, min) => ({ id: `${n}-${slug}`, title, branch: `feature/${slug}`, stage: 'merged', round: 1, maxRound: 2,
+      reviews, history: [], decision: 'APPROVE', ci: { round: 1, status: 'green', fixes: 0 }, updated: at(min) });
+    if (id === 'sample-api') return { project: { name: 'sample-api', host: 'github', merge: 'auto-merge' }, updated: at(2880), runs: [], incidents: [],
+      jobs: [shipped('011', 'pagination-cursor', 'Cursor pagination on /v2/orders', 2880), shipped('010', 'idempotency-keys', 'Idempotency keys on POST /payments', 4320),
+        shipped('009', 'healthcheck-deps', 'Report dependency health on /healthz', 7200)] };
+    return { project: { name: 'sample-docs', host: 'gitlab', merge: 'open-only' }, updated: at(12), runs: [], incidents: [],
+      jobs: [
+        { id: '014-versioned-sidebar', title: 'Version picker in the docs sidebar', branch: 'feature/versioned-sidebar', stage: 'needs-human', gate: 'spec', risk: 'high',
+          reason: 'Spec waiting for approval: it changes the URL scheme.', round: 0, maxRound: 2, reviews: {}, history: [], floor: '/demo/docs', updated: at(12) },
+        { id: '015-search-synonyms', title: 'Search synonyms for API terms', branch: 'feature/search-synonyms', stage: 'build', round: 0, maxRound: 2,
+          reviews: {}, history: [], floor: '/demo/docs-2', bay: null, updated: at(3) },
+        shipped('013', 'dark-code-blocks', 'Readable code blocks in dark mode', 1440)] };
+  }
+  // The same summary hub.py's /api/projects gives, for the demo's boards.
+  function demoSummary(id, b, queue) {
+    const jobs = b.jobs || [], runs = b.runs || [];
+    const shippedRuns = new Set(runs.filter((r) => FINAL.has(r.stage)).map((r) => r.id));
+    const openRuns = runs.filter((r) => !shippedRuns.has(r.id));
+    const openJobs = jobs.filter((j) => (j.run ? !shippedRuns.has(j.run) : !FINAL.has(j.stage)));
+    const pushed = [...openRuns, ...openJobs].filter((x) => x.ci && ['pushed', 'merging'].includes(x.stage));
+    const running = openJobs.filter((j) => ACTIVE.has(j.stage));
+    const human = [...openJobs.filter((j) => j.stage === 'needs-human').map((j) => ({ kind: 'job', id: j.id, title: j.title, gate: j.gate, run: j.run, unit: j.unit })),
+      ...openRuns.filter((r) => r.stage === 'paused').map((r) => ({ kind: 'run', id: r.id, title: r.title, gate: r.gate }))];
+    const ciRed = pushed.filter((x) => ['fixing', 'blocked', 'error'].includes(x.ci.status));
+    const inc = (b.incidents || []).map((i) => i.factory?.state || 'new');
+    const alert = human.length || ciRed.length || inc.some((s) => ['new', 'fix', 'ask', 'recurred'].includes(s));
+    const busy = running.length || pushed.some((x) => x.ci.status === 'pending') || openRuns.some((r) => ['planning', 'running'].includes(r.stage));
+    const updated = [b.updated, ...jobs.map((j) => j.updated), ...runs.map((r) => r.updated)].filter(Boolean).sort().pop() || null;
+    return { id, name: b.project?.name || id, status: alert ? 'needs-you' : busy ? 'running' : 'idle', updated, plugin: null,
+      sessions: new Set([...running, ...openRuns].map((x) => x.floor).filter(Boolean)).size,
+      running: running.map((j) => ({ id: j.id, title: j.title, stage: j.stage, run: j.run, unit: j.unit, bay: !!j.bay })),
+      runs: openRuns.map((r) => ({ id: r.id, title: r.title, stage: r.stage, units: (r.units || []).filter((u) => u.status !== 'skipped').length,
+        done: (r.units || []).filter((u) => u.status === 'done').length })),
+      human, ci: { red: ciRed.map((x) => ({ id: x.id, title: x.title, status: x.ci.status })), pending: pushed.filter((x) => x.ci.status === 'pending').length },
+      incidents: { open: inc.filter((s) => ['new', 'triaging', 'fix', 'ask', 'recurred', 'fixing', 'verifying'].includes(s)).length,
+        alert: inc.filter((s) => ['new', 'fix', 'ask', 'recurred'].includes(s)).length },
+      backlog: queue.length, shipped: shippedRuns.size + jobs.filter((j) => !j.run && FINAL.has(j.stage)).length };
+  }
+  function demoProjects() {
+    const live = PROJECT === DEMO_LIVE ? board : demoLive;
+    projects = [demoSummary(DEMO_LIVE, live, demoQueue), demoSummary('sample-api', demoStatic('sample-api'), []),
+      demoSummary('sample-docs', demoStatic('sample-docs'), [])];
+  }
+  // Put the chosen demo project on screen: the simulation, a still one, or the overview.
+  function demoShow() {
+    if (PROJECT === DEMO_LIVE) { board = demoLive; backlog = demoQueue.slice(); }
+    else if (PROJECT) board = demoStatic(PROJECT);
+    demoProjects();
+  }
   function demoStep() {
+    if (PROJECT !== DEMO_LIVE) {   // the simulation keeps running behind the overview and the other projects
+      const shown = board, shownBacklog = backlog;
+      board = demoLive; demoAdvance(); demoLive = board; board = shown; backlog = shownBacklog;
+      demoProjects(); if (!PROJECT) render(); else renderSwitch();
+      return;
+    }
+    demoAdvance(); demoLive = board; demoProjects(); render();
+  }
+  function demoAdvance() {
+    const render = () => {};   // demoStep draws once the step is done
     const jobs = board.jobs;
     const now = new Date().toISOString();
     demoRuns(now);
@@ -1347,7 +1617,6 @@
     demoTick++;
     board.updated = now;
     setLive(true, 'Demo · simulated');
-    render();
   }
   function demoFile(job, path) {
     const st = job.stage;
@@ -1401,13 +1670,27 @@
   // ---------- start ----------
   if (DEMO) {
     $('demo-banner').hidden = false;
-    board = demoSeed(); demoQueue = DEMO_BACKLOG.slice(); backlog = demoQueue.slice();
+    HUB = true;
+    demoLive = board = demoSeed(); demoQueue = DEMO_BACKLOG.slice(); backlog = demoQueue.slice();
     setLive(true, 'Demo · simulated');
-    render();
+    if (!location.hash) history.replaceState(null, '', projectLink(DEMO_LIVE));
+    PROJECT = undefined;   // so route() sets the first project up
+    route();
     setInterval(demoStep, 1800);
   } else {
-    poll();
-    setInterval(poll, POLL_MS);
+    // A hub answers api/projects; a plain folder server doesn't, and then this is one project's page.
+    fetch('api/projects', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null).then((data) => {
+      if (data && Array.isArray(data.projects)) {
+        HUB = true; projects = data.projects; projectsAt = data.updated;
+        PROJECT = undefined;
+        route();
+        setInterval(pollProjects, 4000);
+      } else {
+        $('brand').removeAttribute('href');
+        poll();
+      }
+      setInterval(poll, POLL_MS);
+    });
   }
 })();
 </script>

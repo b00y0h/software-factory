@@ -64,13 +64,42 @@ how this repo merges. Every other agent reads it first. Read it, fix anything wr
 `/factory` again.
 
 Watch the board: `/factory` starts the dashboard for you on its first command, opens it in
-your browser, and gives you the link (normally <http://localhost:8765/dashboard.html>).
-Sessions share one dashboard per repo, served on localhost only, and it keeps running after
-the session ends. Add `?demo` to the link to see it run on sample data. To serve it by hand:
+your browser, and gives you the link to this repo's board (normally
+<http://localhost:8765/dashboard.html#/p/your-repo>). Add `?demo` to the link to see it run
+on sample data. To start it by hand:
 
 ```bash
-python3 -m http.server 8765 --bind 127.0.0.1 --directory ~/.factory/<repo>
+bash <plugin folder>/skills/factory/scripts/dashboard.sh ~/.factory/<repo>
 ```
+
+## One dashboard for every project
+
+The factory runs in each repo on its own, but you watch all of them in one place. One small
+hub (`scripts/hub.py`, Python's standard library only) serves every repo's state folder under
+`~/.factory/` from one localhost port, and every session in every repo shares it:
+
+- **All projects** (<http://localhost:8765/dashboard.html>) has one tile per repo: whether it
+  needs you, is running or is idle; how many jobs are running, need you, have red CI or open
+  Sentry errors; each ADR run with its progress; how many sessions are working on it; and when
+  it last moved. Projects that need you sort first. Above them, **Needs a human** gathers
+  every held job and paused run from every repo, each linking straight to it, with the command
+  that answers it.
+- **One project** (`#/p/<repo>`) is the full board you know: runs, columns, Sentry, Shipped.
+  Switch projects from the menu in the header, or go back to all of them by clicking the
+  title. Links are shareable on the same machine and survive a reload:
+  `#/p/<repo>/job/<id>` opens that job's spec, build and reviews.
+
+The hub keeps running after the session that started it ends. A newer plugin replaces an older
+hub on its next command, and a per-repo dashboard left running by a plugin before 0.14 keeps
+working beside it (the hub just takes the next free port).
+
+It is not a file server. `~/.factory/` also holds `sentry.token`, pid files and logs, so the
+hub serves only what the dashboard reads (each repo's `project.json`, `backlog.md`, board and
+incident files, and the markdown under `jobs/`, `runs/` and `incidents/`), read-only, and
+nothing that resolves outside its repo's folder. It listens on 127.0.0.1 only, and answers
+only requests addressed to `localhost`, so another website can't read it through DNS
+rebinding. Projects are named by their folder, which is the repo's folder name; two repos with
+the same folder name share one state folder, as they always have.
 
 ## Test quality: tests that would catch the bug
 
@@ -310,9 +339,10 @@ preview updates.
 - **`factory/lessons.md`**, in the repo and committed: the lessons you accepted, which every
   agent also reads.
 - **`~/.factory/<repo>/`**, on your machine: one board file per job or run (`board/<id>.json`,
-  each written only by the session that owns it), the backlog, run plans, one folder per
-  job, and the dashboard. It sits outside every checkout, so every session shares it and any
+  each written only by the session that owns it), the backlog, run plans, and one folder per
+  job. It sits outside every checkout, so every session shares it and any
   session can pick a run back up.
+- **`~/.factory/dashboard.html`**: the one dashboard for every repo, served by the hub.
 - **The floor**: the one checkout where the builder works, which is the factory session's own
   worktree. Claude Code lets a worktree session edit files only in its own worktree, so the
   factory builds there, switching its branch per job or run. Started from a repo's main
@@ -327,7 +357,7 @@ run side by side:
 - **One floor each.** Every session builds in its own worktree. A session's floor holds one
   job or run at a time, and two sessions can never claim the same run or job id.
 - **One dashboard.** Each session writes only its own `board/<id>.json`, and the dashboard
-  merges them all, showing which floor each run is on. Every ADR run gets its own color: a
+  merges them all (and the hub shows every other repo beside it), showing which floor each run is on. Every ADR run gets its own color: a
   stripe down its run strip and down each of its cards, whose tag also names the ADR
   (`0062 · U18`). One-off jobs have no strip to match, so they stay uncolored and carry a
   `one-off` tag. Serve it once; every session's work appears there.

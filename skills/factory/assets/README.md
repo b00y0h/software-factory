@@ -17,7 +17,7 @@ feature or ADR unit → spec-writer → [spec gate] → builder ⇄ reviewers �
 |---|---|
 | `factory/project.md` (this folder, committed) | This repo's profile: stack, test commands, rules, branch names, previews, how it merges, when specs need your approval, and whether CI is shepherded. Every agent reads it first. **Yours to edit.** |
 | `factory/lessons.md` (this folder, committed) | What the factory has learned about this repo, one line each. Only lessons you accept with `/factory lessons accept` land here. Every agent reads it. **Yours to edit.** |
-| `~/.factory/<repo>/` (on your machine) | The factory's state, shared by every session: one `board/<id>.json` per job or run (written only by the session that owns it), `project.json`, `backlog.md`, `runs/<adr>/plan.md`, one `jobs/<id>/` folder per job, and `dashboard.html`. It sits outside every checkout, so any session can pick a run back up. |
+| `~/.factory/<repo>/` (on your machine) | The factory's state, shared by every session: one `board/<id>.json` per job or run (written only by the session that owns it), `project.json`, `backlog.md`, `runs/<adr>/plan.md`, and one `jobs/<id>/` folder per job. It sits outside every checkout, so any session can pick a run back up. The dashboard for every repo lives once, beside these folders, at `~/.factory/dashboard.html`. |
 | the floor | The checkout where a session's builder works: that session's own worktree, holding one job or run at a time. If you start `/factory` from the main checkout, it moves into `.claude/worktrees/factory-<id>` first, so the main checkout never changes branch. |
 
 Several sessions can run ADRs or jobs at once, one each. They share one dashboard, take turns
@@ -38,12 +38,10 @@ on heavy commands such as test suites, and warn when two of them touch the same 
 ```
 
 Watch it: `/factory` starts the dashboard on its first command, opens it in your browser, and
-gives you the link (normally <http://localhost:8765/dashboard.html>). Every session's work
-shows there. Add `?demo` to see it running on sample data. To serve it by hand:
-
-```bash
-python3 -m http.server 8765 --bind 127.0.0.1 --directory ~/.factory/<repo>
-```
+gives you the link to this repo's board. Every session's work shows there. One dashboard
+serves every repo on your machine that uses the factory: <http://localhost:8765/dashboard.html>
+lists them all, with what each is running and what needs you, and the menu in its header
+switches between them. Add `?demo` to see it running on sample data.
 
 ## Branches and merging
 
