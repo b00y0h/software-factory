@@ -25,11 +25,19 @@ feature or ADR unit → spec-writer → [spec gate] → builder ⇄ reviewers �
 
 Start a new session afterwards so the skill and agents load.
 
-**Updating.** `/plugin marketplace update` refreshes the catalog, but it may not upgrade the
-copy you have installed. Open `/plugin`, go to **Installed**, pick **software-factory** and
-choose **Update** (or uninstall and install it again), then start a new session. Every
-`/factory` command names the version it is running in its first line, and warns when another
-session has run a newer one.
+**Updating.** Refreshing the marketplace doesn't upgrade the copy you have installed. From a
+terminal:
+
+```bash
+claude plugin marketplace update software-factory
+claude plugin update software-factory@software-factory
+```
+
+Then start a new session. Or, once, turn on **Enable auto-update** for this marketplace in
+`/plugin` > Marketplaces (it is off by default for third-party marketplaces). Every `/factory`
+command names the version it is running in its first line, and warns when another session
+has run a newer one. In a session where other plugins also define `factory`, the command is
+`/software-factory:factory`.
 
 ## Use
 

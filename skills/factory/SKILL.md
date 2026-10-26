@@ -301,15 +301,15 @@ Parse `$ARGUMENTS`:
 | `rework <job-id> <note>` | Same floor rule. Go to **Rework**. |
 | `sentry [fix <id> \| ignore <id>]` | See **Sentry incidents**. |
 | `lessons [accept\|reject <ids\|all>]` | See **Lessons**. Any session may run it; it never touches a floor's job. |
-| a single word, or a word and an id (`status`, `sentry`, `sentry fix 901`) that isn't a command above | **Not a feature.** It is most likely a command from a newer version of this plugin. Say: *"`<word>` isn't a command in software-factory <version>. If it's from a newer version, update the plugin (`/plugin`, then Installed, software-factory, Update) and start a new session. If you meant a feature, describe it in a sentence."* Then stop. Never start a job from it. |
+| a single word, or a word and an id (`status`, `sentry`, `sentry fix 901`) that isn't a command above | **Not a feature.** It is most likely a command from a newer version of this plugin. Say: *"`<word>` isn't a command in software-factory <version>. If it's from a newer version, update the plugin (in a terminal: `claude plugin update software-factory@software-factory`) and start a new session. If you meant a feature, describe it in a sentence."* Then stop. Never start a job from it. |
 | anything else | The text is a feature. Run a new **job**. If it is only a path to a planning document with more than one unit (a PRD, an execution spec or a workplan, not just an ADR), run it as `adr <path>` instead, so its units are planned, ordered and run in parallel where they can be. |
 
 Before any command:
 0. **Say which plugin version is running**, in your first line: *"software-factory <version>"*
    (from `.claude-plugin/plugin.json` two folders above `SKILL_DIR`). If any file in
    `FACTORY/board/` records a higher `plugin` version, add: *"Another session ran <higher>;
-   this one is older. Update the plugin (`/plugin`, then Installed, software-factory,
-   Update) and start a new session."*
+   this one is older. Update it in a terminal with `claude plugin update
+   software-factory@software-factory`, then start a new session."*
 1. If `FACTORY/board.json` exists, this state folder predates per-session board files.
    Migrate it once: write its `project` block to `project.json`, write each run (with its
    unit jobs) to `board/<RUN>.json` and each other job to `board/<JOB>.json`, then delete
