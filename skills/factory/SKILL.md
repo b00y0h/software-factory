@@ -252,7 +252,7 @@ by every session:
 | `backlog.md` | the user; `/factory next` ticks items |
 | `jobs/<JOB>/`, `runs/<RUN>/` | the agents of the owning session |
 | `tests.lock` | the lock builders take turns on to run heavy commands |
-| `dashboard.html` | copied from this skill on every command |
+| `../dashboard.html` | the dashboard, once for every repo, at `~/.factory/dashboard.html`: `dashboard.sh` copies it from this skill (see step 5) |
 | `jobs/<JOB>/ci/`, `runs/<RUN>/ci/` | the shepherd's `ci-N.md` for each push |
 | `lessons/proposed/<JOB>.md` | the librarian; one file per job, so sessions never collide |
 | `lessons/decided.md` | you: every lesson id accepted or rejected, with the date |
@@ -316,16 +316,18 @@ Before any command:
    `board.json`.
 2. Settle your floor (above).
 3. If `PROFILE` doesn't exist, run **Setup** and stop there.
-4. Copy `SKILL_DIR/assets/dashboard.html` to `FACTORY/dashboard.html` if that file is missing, or
-   if its `factory-dashboard-version` meta tag is lower than this skill's (a session on an
-   older plugin must never replace a newer dashboard).
+4. (Nothing to copy: `dashboard.sh`, in step 5, puts the dashboard at `~/.factory/dashboard.html`,
+   for every repo at once, and never replaces a newer one with an older one.)
 5. **Start the dashboard.** Run `bash "<SKILL_DIR>/scripts/dashboard.sh" "<FACTORY>" --open`.
-   It reuses a server that any session already started for this repo, or starts one on
-   localhost (from port 8765 up) that keeps running after this session. It prints
-   `running <url>` or `started <url>`, and opens the browser only when it started one. Give
+   One hub (`scripts/hub.py`) serves every repo's state folder on this machine from one
+   localhost port (from 8765 up), so the user watches every project on one page and switches
+   between them. The script reuses the hub any session already started, in any repo, replaces
+   one from an older plugin, or starts one that keeps running after this session. It prints
+   `running <url>` or `started <url>`, where the link opens this repo's board
+   (`…/dashboard.html#/p/<repo>`), and opens the browser only when it started the hub. Give
    the user the link the first time in a session, and whenever it says `started`. Every
-   session's work shows on that one page. If the script fails, say why in one line and carry
-   on: the dashboard is a view, never a blocker.
+   session's work, in every repo, shows on that one page. If the script fails, say why in one
+   line and carry on: the dashboard is a view, never a blocker.
 6. Record merges, on **every** board file: run `python3 <SKILL_DIR>/scripts/sweep.py
    <FACTORY> --once`. It asks the host about each pushed run and `merging` job, in any
    session's board file, and marks the ones whose PR or MR has merged `merged` (or closed
@@ -383,8 +385,8 @@ has no `bays` yet (a repo set up before this check existed). Then, if the profil
 
 ## Setup
 
-1. Create `FACTORY` with `board/`, `jobs/`, `runs/` and `claims/`. Copy `dashboard.html`
-   from `SKILL_DIR/assets/`, and `backlog.md` if there isn't one. Start the dashboard (step 5
+1. Create `FACTORY` with `board/`, `jobs/`, `runs/` and `claims/`. Copy `backlog.md` from
+   `SKILL_DIR/assets/` if there isn't one. Start the dashboard (step 5
    above), so the user can watch the setup too.
 2. Copy `SKILL_DIR/assets/README.md` to `WORKTREE/factory/README.md`, and
    `SKILL_DIR/assets/lessons.md` to `WORKTREE/factory/lessons.md` if there isn't one (never
