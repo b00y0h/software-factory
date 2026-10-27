@@ -40,14 +40,15 @@ ensure_sweep() {
 }
 ensure_sweep || true
 
-# And one Sentry poller, when the profile watches Sentry and a token is available (see
-# sentry.py). It records new errors for triage, and verifies and resolves fixed ones.
+# And one Sentry poller, when the profile watches Sentry (see sentry.py). It records new errors
+# for triage, verifies and resolves fixed ones, and writes sentry-status.json on every check, so
+# the dashboard shows whether Sentry is really connected. It starts even without a token: it
+# then reports that, and connects once one is added.
 ensure_sentry() {
   local pidfile="$state/.sentry.pid"
   if [ -s "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then return 0; fi
   python3 -c 'import json,sys; s=(json.load(open(sys.argv[1])).get("sentry") or {}); sys.exit(0 if s.get("url") and s.get("autonomy","triage")!="off" else 1)' \
     "$state/project.json" 2>/dev/null || return 0
-  [ -n "${SENTRY_AUTH_TOKEN:-}" ] || [ -s "$HOME/.factory/sentry.token" ] || return 0
   nohup python3 "$here/sentry.py" poll "$state" >>"$state/sentry.log" 2>&1 &
   echo $! > "$pidfile"
 }

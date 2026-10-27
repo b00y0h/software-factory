@@ -224,6 +224,15 @@ shows the fix held.
   every `/factory` command. It records unresolved issues in the watched environments that
   clear the thresholds (level, events, users) and don't match an *ignore* pattern, one file
   each under `~/.factory/<repo>/incidents/`. They show in a **Sentry** strip on the dashboard.
+- **Connected, or not.** With no errors, a working poller and a broken one would look the
+  same, so the Sentry strip always says which: *Connected to sentry.example.com · org/project*,
+  when it last checked and when it checks next, and how many unresolved issues it sees and how
+  many clear your thresholds. When it isn't connected it says why and what to do: no token, a
+  token Sentry rejected (401) or that lacks access (403), an org or project that doesn't exist,
+  a certificate it can't verify, or a Sentry it can't reach. If no check has landed for two
+  cycles, it says the poller has stopped. Each project's tile on the all-projects page shows
+  the same, and a Sentry that isn't connected counts as needing you. The poller writes each
+  check to `~/.factory/<repo>/sentry-status.json`, never with the token.
 - **Triage.** `/factory sentry` spawns a `triager` (opus) for each new error, all in parallel.
   It reads a scrubbed copy of the latest event (stack frames, breadcrumbs, release; never
   request bodies, cookies, users or IPs, and anything that looks like an email, token or key

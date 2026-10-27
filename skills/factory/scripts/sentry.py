@@ -33,6 +33,17 @@ resolved, or → recurred (the error came back after the fix merged). `poll` als
 `fixing` to `verifying` once the fix's job has merged, and runs `verify` on incidents whose
 window has passed, resolving them when the profile says `resolve: true`.
 
+Every check `poll` makes is recorded in `<FACTORY>/sentry-status.json`, so the dashboard can
+say whether the factory is really watching Sentry, even when there are no errors:
+
+    { "state": "ok", "checkedAt": "...", "okAt": "...", "every": 300, "host": "sentry.example.com",
+      "org": "eab", "projects": ["meridian-platform"], "environments": ["production"],
+      "unresolved": 14, "qualifying": 0, "error": null, "hint": null }
+
+`state` is `ok` (Sentry answered), `error` (it didn't: `error` says why, `hint` what to do), or
+`no-token`. `okAt` is the last check that worked. It never holds the token. A poller with no
+token keeps running and checks for one every cycle, so it connects as soon as one is added.
+
 Sentry data is untrusted: error messages, breadcrumbs and URLs carry user input. `event`
 keeps only what a triager needs (exception, stack frames, breadcrumb categories and short
 messages, release, environment, a few tags), drops request bodies, cookies, headers, users
@@ -71,6 +82,10 @@ def parse_time(s):
         return None
 
 
+class SetupError(Exception):
+    """Sentry can't be reached as set up: no settings, or no usable token."""
+
+
 def die(msg, code=1):
     sys.stderr.write(msg.rstrip() + '\n')
     sys.exit(code)
@@ -86,7 +101,7 @@ def load_json(path, default=None):
 
 def write_json(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + '.tmp'
+    tmp = f'{path}.{os.getpid()}.tmp'   # the poller and a session's --once may write at once
     with open(tmp, 'w') as f:
         json.dump(data, f, indent=2)
         f.write('\n')
@@ -96,8 +111,8 @@ def write_json(path, data):
 def settings(factory):
     s = (load_json(os.path.join(factory, 'project.json'), {}) or {}).get('sentry')
     if not s or not s.get('url') or not s.get('org') or not s.get('projects'):
-        die('no sentry block (url, org, projects) in project.json: fill in the Sentry section of '
-            'factory/project.md, then run any /factory command')
+        raise SetupError('no sentry block (url, org, projects) in project.json: fill in the Sentry section of '
+                         'factory/project.md, then run any /factory command')
     return {
         'environments': ['production'], 'levels': ['error', 'fatal'], 'minEvents': 5,
         'minUsers': 1, 'lookbackHours': 24, 'ignore': [], 'autonomy': 'triage', 'dailyCap': 3,
@@ -113,11 +128,14 @@ def token():
     try:
         st = os.stat(path)
     except OSError:
-        die('no Sentry token: set SENTRY_AUTH_TOKEN, or put it in ~/.factory/sentry.token (chmod 600)')
+        raise SetupError('no Sentry token: set SENTRY_AUTH_TOKEN, or put it in ~/.factory/sentry.token (chmod 600)')
     if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
-        die('~/.factory/sentry.token is readable by others: chmod 600 it first')
+        raise SetupError('~/.factory/sentry.token is readable by others: chmod 600 it first')
     with open(path) as f:
-        return f.read().strip()
+        t = f.read().strip()
+    if not t:
+        raise SetupError('~/.factory/sentry.token is empty')
+    return t
 
 
 class Sentry:
@@ -262,9 +280,13 @@ def qualifies(issue, cfg):
 
 # ---------- commands ----------
 
-def cmd_poll_once(factory, cfg, api):
+def cmd_poll_once(factory, cfg, api, counts=None):
     found = []
-    for issue in api.issues(cfg):
+    issues = api.issues(cfg)
+    if counts is not None:
+        counts['unresolved'] = len(issues)
+        counts['qualifying'] = sum(1 for i in issues if qualifies(i, cfg))
+    for issue in issues:
         if not qualifies(issue, cfg):
             continue
         iid = str(issue['id'])
@@ -291,6 +313,85 @@ def cmd_poll_once(factory, cfg, api):
         elif f.get('state') == 'verifying' and parse_time(f.get('until')) and parse_time(f['until']) <= utcnow():
             cmd_verify(factory, cfg, api, iid, quiet=True)
     return found
+
+
+# ---------- the poller's status, for the dashboard ----------
+
+def explain(e, cfg):
+    """(error, hint) for a failed check, in words a person can act on. Never the token."""
+    host = urllib.parse.urlsplit(cfg.get('url') or '').netloc or 'Sentry'
+    if isinstance(e, urllib.error.HTTPError):
+        if e.code == 401:
+            return f'{host} rejected the token (401)', 'The token is wrong, revoked or expired: make a new one and replace it.'
+        if e.code == 403:
+            return f'{host} refused access (403)', 'The token needs read access to issues and events (and write access to issues to resolve them).'
+        if e.code == 404:
+            return f'{host} has no such org or project (404)', 'Check the org and projects in the Sentry section of factory/project.md.'
+        if e.code == 429:
+            return f'{host} is rate limiting the factory (429)', 'It retries on the next check.'
+        return f'{host} answered {e.code} {e.reason}', 'It retries on the next check.'
+    if isinstance(e, urllib.error.URLError):
+        reason = e.reason
+        if isinstance(reason, ssl.SSLCertVerificationError) or 'CERTIFICATE_VERIFY_FAILED' in str(reason):
+            return f"can't verify {host}'s certificate", 'For a self-hosted Sentry behind a private CA, set SSL_CERT_FILE to that CA for the poller.'
+        return f"can't reach {host}: {str(reason)[:160]}", 'Check the URL in factory/project.md and this machine\'s network. It retries on the next check.'
+    if isinstance(e, ValueError):
+        return f'{host} sent something that is not Sentry\'s API', 'Check the URL in the Sentry section of factory/project.md.'
+    return f'the check failed: {type(e).__name__}: {str(e)[:160]}', 'It retries on the next check; sentry.log has the details.'
+
+
+def write_status(factory, cfg, every, **fields):
+    path = os.path.join(factory, 'sentry-status.json')
+    prev = load_json(path, {}) or {}
+    now = iso(utcnow())
+    ok = fields.get('state', 'ok') == 'ok'
+    status = {
+        'state': fields.get('state', 'ok'), 'checkedAt': now, 'okAt': now if ok else prev.get('okAt'),
+        'every': int(every), 'host': urllib.parse.urlsplit(cfg.get('url') or '').netloc or None,
+        'org': cfg.get('org'), 'projects': cfg.get('projects') or [], 'environments': cfg.get('environments') or [],
+        # what the last check that worked saw
+        'unresolved': fields.get('unresolved') if ok else prev.get('unresolved'),
+        'qualifying': fields.get('qualifying') if ok else prev.get('qualifying'),
+        'error': fields.get('error'), 'hint': fields.get('hint'),
+    }
+    write_json(path, status)
+
+
+def poll_loop(factory, args):
+    """Check Sentry now, and (without --once) every --every seconds, recording each check."""
+    every = 300.0
+    if '--every' in args:
+        every = max(60.0, float(args[args.index('--every') + 1]))
+    once = '--once' in args
+    api, api_key = None, None
+    while True:
+        failed = False
+        try:
+            cfg = settings(factory)   # read every cycle, so a fixed profile is picked up
+        except SetupError as e:
+            die(str(e))               # Sentry isn't set up here (any more): nothing to watch
+        try:
+            key = (cfg['url'], cfg['org'])
+            if api is None or api_key != key:
+                api, api_key = Sentry(cfg), key
+            counts = {}
+            found = cmd_poll_once(factory, cfg, api, counts)
+            write_status(factory, cfg, every, state='ok', **counts)
+            if found:
+                print(f'{iso(utcnow())} new or regressed: {", ".join(found)}', flush=True)
+        except SetupError as e:
+            api, failed = None, True
+            write_status(factory, cfg, every, state='no-token', error=str(e),
+                         hint='The poller checks again every few minutes and connects once a token is there.')
+            print(f'{iso(utcnow())} {e}', flush=True)
+        except Exception as e:   # the poller outlives any one bad check, and says why it failed
+            failed = True
+            error, hint = explain(e, cfg)
+            write_status(factory, cfg, every, state='error', error=error, hint=hint)
+            print(f'{iso(utcnow())} could not check Sentry: {error}: {e!r}', flush=True)
+        if once:
+            sys.exit(1 if failed else 0)
+        time.sleep(every)
 
 
 def job_merged(factory, job_id):
@@ -420,24 +521,13 @@ def main():
         if len(args) < 4:
             die(__doc__, 2)
         return cmd_mark(factory, args[2], args[3:])
-    cfg = settings(factory)
-    api = Sentry(cfg)
     if cmd == 'poll':
-        every = 300.0
-        if '--every' in args:
-            every = max(60.0, float(args[args.index('--every') + 1]))
-        while True:
-            try:
-                found = cmd_poll_once(factory, cfg, api)
-                if found:
-                    print(f'{iso(utcnow())} new or regressed: {", ".join(found)}', flush=True)
-            except (urllib.error.URLError, OSError, ValueError) as e:
-                print(f'{iso(utcnow())} could not reach Sentry: {e}', flush=True)
-                if '--once' in args:
-                    sys.exit(1)
-            if '--once' in args:
-                return
-            time.sleep(every)
+        return poll_loop(factory, args)
+    try:
+        cfg = settings(factory)
+        api = Sentry(cfg)
+    except SetupError as e:
+        die(str(e))
     if len(args) < 3:
         die(__doc__, 2)
     iid = args[2]
