@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="factory-dashboard-version" content="15">
+<meta name="factory-dashboard-version" content="16">
 <title>Software Factory</title>
 <!--
   The factory's dashboard, for every repo on this machine. The master copy lives in the
@@ -159,6 +159,23 @@
   .inc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 10px; }
   .inc-cards > .card { min-width: 0; }
   .inc-cards > .card.done { opacity: .62; }
+  .inc-cards > p { grid-column: 1 / -1; margin: 4px 2px; }
+  /* is the factory really watching Sentry? from the poller's last check */
+  .conn { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 10px; padding: 9px 12px; border-radius: 10px;
+    background: var(--surface); border: 1px solid var(--border); font-size: 12.5px; }
+  .conn.bad { border-color: var(--alert-line); background: var(--alert-bg); }
+  .conn > i { flex: none; width: 9px; height: 9px; margin-top: 4px; border-radius: 50%; background: var(--faint); }
+  .conn.ok > i { background: var(--pass); box-shadow: 0 0 0 3px var(--pass-bg); }
+  .conn.bad > i { background: var(--alert); box-shadow: 0 0 0 3px var(--alert-line); }
+  .conn strong { display: block; font-size: 13px; }
+  .conn.bad strong { color: var(--alert); }
+  .conn p { margin: 2px 0 0; color: var(--muted); }
+  .conn code { background: var(--surface-2); padding: 0 5px; border-radius: 4px; }
+  .proj-sentry { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .proj-sentry > i { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+  .proj-sentry.ok > i { background: var(--pass); }
+  .proj-sentry.bad { color: var(--alert); font-weight: 600; }
+  .proj-sentry.bad > i { background: var(--alert); }
   .inc-meta { margin-top: 6px; font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 10px; }
 
   /* ---------- ADR runs: one strip per run, a chip per unit ---------- */
@@ -419,6 +436,7 @@
 
   <section id="incidents" class="incidents" hidden aria-label="Sentry incidents">
     <h2><span id="inc-title">Sentry</span><span id="inc-quiet" class="inc-note"></span></h2>
+    <div id="inc-conn" class="conn" hidden></div>
     <div id="inc-cards" class="inc-cards"></div>
   </section>
 
@@ -1009,6 +1027,7 @@
   async function loadState() {
     const [projectText, listing, legacy, incListing] = await Promise.all([getText('project.json'), getText('board/'),
       checkLegacy ? getText('board.json') : null, getText('incidents/')]);
+    const sentryText = await getText('sentry-status.json');   // the poller's last check, if Sentry is set up
     if (legacy == null && (projectText != null || listing != null)) checkLegacy = false;
     if (projectText == null && listing == null && legacy == null) throw new Error('found no project.json, board/ or board.json');
     const names = listing ? [...new Set([...listing.matchAll(/href="([^"/?#]+\.json)"/g)].map((m) => decodeURIComponent(m[1])))].sort() : [];
@@ -1018,6 +1037,7 @@
     const incTexts = await Promise.all(incNames.map((n) => getText('incidents/' + encodeURIComponent(n))));
     const merged = { project: null, runs: [], jobs: [], incidents: [], updated: null };
     for (const t of incTexts) { try { if (t) merged.incidents.push(JSON.parse(t)); } catch { /* mid-write; next poll */ } }
+    try { merged.sentryStatus = sentryText ? JSON.parse(sentryText) : null; } catch { /* mid-write; next poll */ }
     try { merged.project = projectText ? JSON.parse(projectText) : null; } catch { /* rewritten mid-read; next poll */ }
     const add = (doc) => {
       if (!merged.project && doc.project) merged.project = doc.project;
@@ -1029,7 +1049,7 @@
       if (!t) continue;
       try { add(JSON.parse(t)); } catch { /* a file mid-write; the next poll reads it */ }
     }
-    return { merged, key: [projectText, legacy, ...names.map((n, i) => n + '\n' + texts[i]), ...incTexts].join('\u0000') };
+    return { merged, key: [projectText, legacy, ...names.map((n, i) => n + '\n' + texts[i]), ...incTexts, sentryText].join('\u0000') };
   }
   async function poll() {
     if (HUB && !PROJECT) return;   // the overview reads the hub's summary instead
@@ -1116,11 +1136,19 @@
       <div class="proj-head"><span class="proj-name">${esc(name)}</span>${tone ? `<span class="badge ${tone}">${label}</span>` : `<span class="muted">${label}</span>`}</div>
       ${name !== p.id ? `<div class="proj-repo">~/.factory/${esc(p.id)}</div>` : ''}
       ${stats ? `<div class="proj-stats">${stats}</div>` : '<div class="proj-quiet">Nothing running.</div>'}
+      ${sentryLine(p.sentry)}
       ${list.length ? `<ul class="proj-list">${list.join('')}${more > 0 ? `<li class="muted">and ${more} more</li>` : ''}</ul>` : ''}
       <div class="proj-foot">${p.sessions ? `<span>${plural(p.sessions, 'session')} working</span>` : ''}
         <span>${p.updated ? `moved <span data-ago="${esc(p.updated)}">${esc(ago(p.updated))}</span>` : 'never run'}</span>
         <span>${p.shipped} shipped</span>${p.plugin ? `<span>plugin ${esc(p.plugin)}</span>` : ''}</div>
     </a>`;
+  }
+  function sentryLine(h) {
+    if (!h) return '';
+    const text = { ok: 'Sentry connected', waiting: 'Sentry not checked yet', 'no-token': 'Sentry not connected: no token',
+      stale: 'Sentry poller stopped', error: 'Sentry not connected' }[h.state] || 'Sentry not connected';
+    const when = h.checkedAt ? ` · checked <span data-ago="${esc(h.checkedAt)}">${esc(ago(h.checkedAt))}</span>` : '';
+    return `<div class="proj-sentry ${h.state === 'ok' ? 'ok' : SENTRY_BAD.has(h.state) ? 'bad' : ''}"><i aria-hidden="true"></i><span>${text}${when}</span></div>`;
   }
   function renderOverview() {
     const all = sortedProjects();
@@ -1227,7 +1255,44 @@
       <div class="card-foot"><span>last seen <span data-ago="${esc(s.lastSeen || '')}">${esc(ago(s.lastSeen))}</span></span><span>${link}${pr}</span></div>
     </article>`;
   }
+  // Whether the factory is really watching Sentry, from the poller's last check. The same rule as
+  // hub.py's sentry_health: null when this repo doesn't watch Sentry, `waiting` before the first
+  // check, and `stale` when no check has landed for two cycles (the poller has likely stopped).
+  function sentryHealth(project, status) {
+    const cfg = project?.sentry;
+    if (!cfg || !cfg.url || cfg.autonomy === 'off') return null;
+    if (!status || !status.checkedAt) return { state: 'waiting' };
+    const out = { ...status, was: status.state };
+    const age = (Date.now() - new Date(status.checkedAt).getTime()) / 1000;
+    if (!(age <= 2 * (Number(status.every) || 300) + 120)) out.state = 'stale';
+    return out;
+  }
+  const SENTRY_BAD = new Set(['error', 'no-token', 'stale']);
+  function untilText(iso, every) {
+    const s = (new Date(iso).getTime() + (Number(every) || 300) * 1000 - Date.now()) / 1000;
+    return s <= 30 ? 'any moment now' : s < 90 ? 'in about a minute' : `in about ${Math.round(s / 60)} minutes`;
+  }
+  function connHtml(h) {
+    const cfg = board.project?.sentry || {};
+    const where = [h.host || (cfg.url || '').replace(/^https?:\/\//, '').replace(/\/.*$/, ''),
+      cfg.org && (cfg.projects || []).length ? `${cfg.org}/${cfg.projects.join(', ')}` : ''].filter(Boolean).join(' · ');
+    const when = (iso) => `<span data-ago="${esc(iso)}">${esc(ago(iso))}</span>`;
+    const lastGood = h.okAt ? `Last good check ${when(h.okAt)}.` : 'It has never connected.';
+    switch (h.state) {
+      case 'ok': {
+        const envs = (cfg.environments || ['production']).join(', ');
+        const seen = h.unresolved == null ? '' : ` It sees ${h.unresolved} unresolved issue${h.unresolved === 1 ? '' : 's'} in ${esc(envs)} from the last ${esc(cfg.lookbackHours || 24)}h, ${h.qualifying || 0} over your thresholds.`;
+        return ['ok', `Connected to ${esc(where)}`, `Checked ${when(h.checkedAt)}, next check ${esc(untilText(h.checkedAt, h.every))}.${seen}`];
+      }
+      case 'waiting': return ['', 'Sentry is set up, but not checked yet', `The poller starts with the next <code>/factory</code> command in this repo, and checks every 5 minutes.`];
+      case 'no-token': return ['bad', 'Not connected: no Sentry token', `${esc(h.error || '')}. ${esc(h.hint || '')}`];
+      case 'stale': return ['bad', 'Not checking: the Sentry poller has stopped',
+        `Its last check was ${when(h.checkedAt)}${h.was !== 'ok' && h.error ? ` (${esc(h.error)})` : ''}. ${h.was !== 'ok' ? lastGood + ' ' : ''}Run any <code>/factory</code> command in this repo to start it again.`];
+      default: return ['bad', `Not connected: ${esc(h.error || 'the last check failed')}`, `Checked ${when(h.checkedAt)}. ${lastGood} ${esc(h.hint || '')}`];
+    }
+  }
   function renderIncidents() {
+    const health = sentryHealth(board.project, board.sentryStatus);
     const all = board.incidents || [];
     const weekAgo = Date.now() - 7 * 86400000;
     const shown = all.filter((i) => {
@@ -1240,14 +1305,22 @@
     const sev = { high: 0, medium: 1, low: 2 };
     shown.sort((a, b) => (order[a.factory?.state] ?? 3) - (order[b.factory?.state] ?? 3)
       || (sev[a.factory?.severity] ?? 1) - (sev[b.factory?.severity] ?? 1) || (b.sentry?.users || 0) - (a.sentry?.users || 0));
-    $('incidents').hidden = all.length === 0;
+    $('incidents').hidden = all.length === 0 && !health;
+    $('inc-conn').hidden = !health;
+    if (health) {
+      const [tone, head, detail] = connHtml(health);
+      $('inc-conn').className = 'conn ' + tone;
+      $('inc-conn').innerHTML = `<i aria-hidden="true"></i><div><strong>${head}</strong><p>${detail}</p></div>`;
+    }
     const open = shown.filter((i) => !['resolved', 'verified'].includes(i.factory?.state)).length;
     const settled = all.filter((i) => ['noise', 'duplicate'].includes(i.factory?.state)).length;
     const resolved = all.filter((i) => i.factory?.state === 'resolved').length;
     $('inc-title').textContent = `Sentry · ${open} open`;
     $('inc-quiet').textContent = [resolved ? `${resolved} resolved by the factory` : '', settled ? `${settled} dismissed as noise or duplicates` : '',
       board.project?.sentry?.autonomy ? `autonomy: ${board.project.sentry.autonomy}` : ''].filter(Boolean).join(' · ');
-    $('inc-cards').innerHTML = shown.map(incidentCard).join('') || '<p class="muted">Nothing open. The factory is watching.</p>';
+    $('inc-cards').innerHTML = shown.map(incidentCard).join('') || (health?.state === 'ok'
+      ? '<p class="muted">Nothing open. The factory is watching.</p>'
+      : '<p class="muted">Nothing recorded, but the factory isn\'t reading Sentry right now, so there may be errors it hasn\'t seen.</p>');
   }
   function openIncident(id) {
     const inc = (board.incidents || []).find((i) => i.id === id);
@@ -1373,7 +1446,10 @@
   $('history-box').addEventListener('toggle', () => {
     try { localStorage.setItem('factory-history', $('history-box').open ? 'open' : 'closed'); } catch { /* storage is optional */ }
   });
-  setInterval(() => document.querySelectorAll('[data-ago]').forEach((el) => { el.textContent = ago(el.dataset.ago); }), 15000);
+  setInterval(() => {
+    if (PROJECT !== null || !HUB) renderIncidents();   // a poller can go stale with no file changing
+    document.querySelectorAll('[data-ago]').forEach((el) => { el.textContent = ago(el.dataset.ago); });
+  }, 15000);
 
   // ---------- demo mode: sample jobs and a simulated loop ----------
   function hash(s) { let h = 2166136261; for (const c of s) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
@@ -1385,7 +1461,9 @@
     const unitJob = (run, unit, slug, title, extra) => ({ ...job('', '', title, extra), id: `${run.split('-')[0]}-${unit.toLowerCase()}-${slug}`,
       run, unit, branch: `feature/${run}` });
     return {
-      project: { name: 'Sample project', host: 'github', merge: 'auto-merge', sentry: { autonomy: 'triage' } },
+      project: { name: 'Sample project', host: 'github', merge: 'auto-merge',
+        sentry: { url: 'https://sentry.example.com', org: 'sample', projects: ['web'], environments: ['production'], lookbackHours: 24, autonomy: 'triage' } },
+      sentryStatus: { state: 'ok', checkedAt: at(1), okAt: at(1), every: 300, host: 'sentry.example.com', unresolved: 17, qualifying: 3 },
       incidents: [
         { id: '901', sentry: { shortId: 'SAMPLE-1A', title: "TypeError: Cannot read properties of undefined (reading 'recipeId')", culprit: 'apps/email/compose.ts in buildDraft',
           level: 'error', events: 42, users: 7, lastSeen: at(6), link: null }, factory: { state: 'fix', severity: 'high' } },
@@ -1511,7 +1589,11 @@
     const reviews = { security: 'PASS', ux: 'PASS', ui: 'PASS', code: 'PASS', tests: 'PASS' };
     const shipped = (n, slug, title, min) => ({ id: `${n}-${slug}`, title, branch: `feature/${slug}`, stage: 'merged', round: 1, maxRound: 2,
       reviews, history: [], decision: 'APPROVE', ci: { round: 1, status: 'green', fixes: 0 }, updated: at(min) });
-    if (id === 'sample-api') return { project: { name: 'sample-api', host: 'github', merge: 'auto-merge' }, updated: at(2880), runs: [], incidents: [],
+    if (id === 'sample-api') return { project: { name: 'sample-api', host: 'github', merge: 'auto-merge',
+      sentry: { url: 'https://sentry.example.com', org: 'sample', projects: ['api'], autonomy: 'triage' } }, updated: at(2880), runs: [], incidents: [],
+      sentryStatus: { state: 'no-token', checkedAt: at(2), okAt: null, every: 300, host: 'sentry.example.com',
+        error: 'no Sentry token: set SENTRY_AUTH_TOKEN, or put it in ~/.factory/sentry.token (chmod 600)',
+        hint: 'The poller checks again every few minutes and connects once a token is there.' },
       jobs: [shipped('011', 'pagination-cursor', 'Cursor pagination on /v2/orders', 2880), shipped('010', 'idempotency-keys', 'Idempotency keys on POST /payments', 4320),
         shipped('009', 'healthcheck-deps', 'Report dependency health on /healthz', 7200)] };
     return { project: { name: 'sample-docs', host: 'gitlab', merge: 'open-only' }, updated: at(12), runs: [], incidents: [],
@@ -1534,7 +1616,8 @@
       ...openRuns.filter((r) => r.stage === 'paused').map((r) => ({ kind: 'run', id: r.id, title: r.title, gate: r.gate }))];
     const ciRed = pushed.filter((x) => ['fixing', 'blocked', 'error'].includes(x.ci.status));
     const inc = (b.incidents || []).map((i) => i.factory?.state || 'new');
-    const alert = human.length || ciRed.length || inc.some((s) => ['new', 'fix', 'ask', 'recurred'].includes(s));
+    const sentry = sentryHealth(b.project, b.sentryStatus);
+    const alert = human.length || ciRed.length || inc.some((s) => ['new', 'fix', 'ask', 'recurred'].includes(s)) || SENTRY_BAD.has(sentry?.state);
     const busy = running.length || pushed.some((x) => x.ci.status === 'pending') || openRuns.some((r) => ['planning', 'running'].includes(r.stage));
     const updated = [b.updated, ...jobs.map((j) => j.updated), ...runs.map((r) => r.updated)].filter(Boolean).sort().pop() || null;
     return { id, name: b.project?.name || id, status: alert ? 'needs-you' : busy ? 'running' : 'idle', updated, plugin: null,
@@ -1542,7 +1625,7 @@
       running: running.map((j) => ({ id: j.id, title: j.title, stage: j.stage, run: j.run, unit: j.unit, bay: !!j.bay })),
       runs: openRuns.map((r) => ({ id: r.id, title: r.title, stage: r.stage, units: (r.units || []).filter((u) => u.status !== 'skipped').length,
         done: (r.units || []).filter((u) => u.status === 'done').length })),
-      human, ci: { red: ciRed.map((x) => ({ id: x.id, title: x.title, status: x.ci.status })), pending: pushed.filter((x) => x.ci.status === 'pending').length },
+      sentry, human, ci: { red: ciRed.map((x) => ({ id: x.id, title: x.title, status: x.ci.status })), pending: pushed.filter((x) => x.ci.status === 'pending').length },
       incidents: { open: inc.filter((s) => ['new', 'triaging', 'fix', 'ask', 'recurred', 'fixing', 'verifying'].includes(s)).length,
         alert: inc.filter((s) => ['new', 'fix', 'ask', 'recurred'].includes(s)).length },
       backlog: queue.length, shipped: shippedRuns.size + jobs.filter((j) => !j.run && FINAL.has(j.stage)).length };
@@ -1614,6 +1697,7 @@
         else j.stage = 'merged';
       }
     }
+    if (board.sentryStatus && demoTick % 20 === 0) board.sentryStatus = { ...board.sentryStatus, checkedAt: now, okAt: now };   // the poller checks on
     demoTick++;
     board.updated = now;
     setLive(true, 'Demo · simulated');

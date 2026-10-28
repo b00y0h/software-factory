@@ -33,12 +33,13 @@ import sys
 import urllib.parse
 
 # dashboard.sh restarts a hub that reports a lower version than the script it has.
-HUB_VERSION = 1
+HUB_VERSION = 2
 
 SEG = r'[A-Za-z0-9_][A-Za-z0-9._-]*'
 # The paths inside a project folder the dashboard may read. Nothing else is served.
 ALLOWED = [re.compile('^' + p + '$') for p in (
     r'project\.json',
+    r'sentry-status\.json',
     r'backlog\.md',
     r'board/',
     rf'board/{SEG}\.json',
@@ -141,7 +142,8 @@ def summarize(home, repo):
     except OSError:
         pass
 
-    alert = bool(human or ci_red or any(s in INC_ALERT for s in inc_state))
+    sentry = sentry_health(project, read_json(os.path.join(folder, 'sentry-status.json')))
+    alert = bool(human or ci_red or any(s in INC_ALERT for s in inc_state) or (sentry and sentry['state'] in SENTRY_ALERT))
     busy = bool(running or ci_pending or any(r.get('stage') in ('planning', 'running') for r in open_runs))
     return {
         'id': repo,
@@ -159,10 +161,37 @@ def summarize(home, repo):
                   'done': len([u for u in r.get('units') or [] if u.get('status') == 'done'])} for r in open_runs],
         'human': human,
         'ci': {'red': ci_red, 'pending': ci_pending},
+        'sentry': sentry,
         'incidents': {'open': sum(1 for s in inc_state if s in INC_OPEN), 'alert': sum(1 for s in inc_state if s in INC_ALERT)},
         'backlog': backlog,
         'shipped': shipped,
     }
+
+
+SENTRY_ALERT = {'error', 'no-token', 'stale'}
+
+
+def sentry_health(project, status):
+    """Whether the factory is really watching Sentry for this repo, from the poller's last check
+    (sentry-status.json, written by sentry.py). None when the repo doesn't watch Sentry.
+
+    `waiting` (set up, never checked yet), `ok`, `error`, `no-token`, or `stale`: no check for
+    more than two cycles, so the poller has most likely stopped. The dashboard uses the same rule."""
+    cfg = project.get('sentry') if isinstance(project, dict) else None
+    if not isinstance(cfg, dict) or not cfg.get('url') or cfg.get('autonomy') == 'off':
+        return None
+    if not isinstance(status, dict) or not status.get('checkedAt'):
+        return {'state': 'waiting'}
+    keep = ('state', 'checkedAt', 'okAt', 'every', 'error', 'hint', 'unresolved', 'qualifying', 'host')
+    out = {k: status.get(k) for k in keep}
+    try:
+        checked = datetime.datetime.fromisoformat(str(status['checkedAt']).replace('Z', '+00:00'))
+        age = (datetime.datetime.now(datetime.timezone.utc) - checked).total_seconds()
+        if age > 2 * float(status.get('every') or 300) + 120:
+            out['state'] = 'stale'
+    except (TypeError, ValueError):
+        out['state'] = 'stale'
+    return out
 
 
 def version_key(v):

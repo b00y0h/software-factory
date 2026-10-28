@@ -917,7 +917,11 @@ never written to a board file, job folder or prompt. Each incident is
 minutes, logging to `FACTORY/sentry.log`), and step 8 of **Commands** polls once per command.
 Polling records every unresolved issue that clears the thresholds and isn't ignored. It also
 moves a `fixing` incident to `verifying` once its job has merged, and gives the verdict when
-the window ends (see *Verifying*).
+the window ends (see *Verifying*). Every check, good or bad, is recorded in
+`FACTORY/sentry-status.json` (`ok`, `error` with the reason and what to do, or `no-token`), and
+the dashboard shows it, so the user can see Sentry is really being read even with no errors.
+The poller starts even without a token, reports that, and connects once one is added. When
+step 8's poll fails, tell the user its `error` and `hint` from that file in one line.
 
 **`/factory sentry`:**
 1. Poll once (`sentry.py poll <FACTORY> --once`), then read `sentry.py list <FACTORY>`.
