@@ -88,6 +88,8 @@ from `SENTRY_AUTH_TOKEN`, or `~/.factory/sentry.token` (chmod 600).
 - Ignore errors whose title or culprit contains: `<pattern>`, …
 - Autonomy: `triage` (propose each fix; you start it with `/factory sentry fix <id>`) /
   `fix` (start fix jobs on its own, most severe first, at most `3` a day) / `off`
+- Auto-triage: `on` (the Sentry poller triages new errors by itself, in a headless Claude Code
+  run, and starts no fixes) / `off` (they wait for `/factory sentry`)
 - Deploy lag: `2`h · Verify for: `24`h after the fix reaches production · Resolve in Sentry
   after verifying: `yes`
 - Releases: <how a Sentry release maps to a commit here, e.g. "release is the git sha", or

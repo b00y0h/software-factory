@@ -233,6 +233,15 @@ shows the fix held.
   cycles, it says the poller has stopped. Each project's tile on the all-projects page shows
   the same, and a Sentry that isn't connected counts as needing you. The poller writes each
   check to `~/.factory/<repo>/sentry-status.json`, never with the token.
+- **Triage, by itself.** New errors don't wait for you. When the poller finds one, it starts a
+  headless Claude Code run in the repo (`claude -p "/software-factory:factory sentry auto"`)
+  that triages every new error and starts no fixes. The run may only read files, run `git`
+  and `python3`, write its verdicts and spawn triagers. One run at a time, at most two tries
+  per error a day, 45 minutes at most, with its output in `~/.factory/<repo>/triage.log`.
+  The dashboard shows each error as *triaging automatically* or *queued for triage*, and says
+  so when auto-triage can't run and the error is waiting for you. Set *Auto-triage* to `off`
+  in `factory/project.md` to triage only when you run `/factory sentry`. Resolved and
+  dismissed errors leave the Sentry strip; its header counts them.
 - **Triage.** `/factory sentry` spawns a `triager` (opus) for each new error, all in parallel.
   It reads a scrubbed copy of the latest event (stack frames, breadcrumbs, release; never
   request bodies, cookies, users or IPs, and anything that looks like an email, token or key
