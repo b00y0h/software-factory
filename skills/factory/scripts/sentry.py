@@ -40,9 +40,19 @@ say whether the factory is really watching Sentry, even when there are no errors
       "org": "eab", "projects": ["meridian-platform"], "environments": ["production"],
       "unresolved": 14, "qualifying": 0, "error": null, "hint": null }
 
+`autoTriage` says whether the poller is triaging new errors by itself (see below).
+
 `state` is `ok` (Sentry answered), `error` (it didn't: `error` says why, `hint` what to do), or
 `no-token`. `okAt` is the last check that worked. It never holds the token. A poller with no
 token keeps running and checks for one every cycle, so it connects as soon as one is added.
+
+Auto-triage: when a check finds incidents that are `new` or `recurred`, the long-running
+poller (never `--once`) starts a headless Claude Code run in the repo,
+`claude -p "/software-factory:factory sentry auto"`, which triages them and starts no fixes.
+It needs the repo's path (`root` in project.json, written by every /factory command) and the
+`claude` CLI. One run at a time, at most 2 tries per incident a day, 45 minutes at most;
+its output goes to `<FACTORY>/triage.log`, its bookkeeping to `<FACTORY>/autotriage.json`.
+`autoTriage: false` in the sentry block, or autonomy `off`, turns it off.
 
 Sentry data is untrusted: error messages, breadcrumbs and URLs carry user input. `event`
 keeps only what a triager needs (exception, stack frames, breadcrumb categories and short
@@ -54,8 +64,10 @@ import glob
 import json
 import os
 import re
+import shutil
 import ssl
 import stat
+import subprocess
 import sys
 import time
 import urllib.error
@@ -116,7 +128,7 @@ def settings(factory):
     return {
         'environments': ['production'], 'levels': ['error', 'fatal'], 'minEvents': 5,
         'minUsers': 1, 'lookbackHours': 24, 'ignore': [], 'autonomy': 'triage', 'dailyCap': 3,
-        'deployLagHours': 2, 'verifyHours': 24, 'resolve': True, **s,
+        'deployLagHours': 2, 'verifyHours': 24, 'resolve': True, 'autoTriage': True, **s,
     }
 
 
@@ -353,8 +365,88 @@ def write_status(factory, cfg, every, **fields):
         'unresolved': fields.get('unresolved') if ok else prev.get('unresolved'),
         'qualifying': fields.get('qualifying') if ok else prev.get('qualifying'),
         'error': fields.get('error'), 'hint': fields.get('hint'),
+        'autoTriage': fields.get('autoTriage', prev.get('autoTriage')),
     }
     write_json(path, status)
+
+
+# ---------- auto-triage: a headless Claude Code run triages new errors ----------
+
+TRIAGE_TOOLS = ['Agent', 'Read', 'Grep', 'Glob', 'Write', 'Bash(python3:*)', 'Bash(git:*)']
+TRIAGE_TIMEOUT = 45 * 60
+TRIES_PER_DAY = 2
+_triage_proc = None   # the run this poller started, while it runs
+
+
+def pid_alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def auto_triage(factory, cfg):
+    """Start a headless triage run for new or recurred incidents when one is due, and say what
+    auto-triage is doing, for sentry-status.json."""
+    global _triage_proc
+    if not cfg.get('autoTriage', True) or cfg.get('autonomy') == 'off':
+        return {'state': 'off'}
+    path = os.path.join(factory, 'autotriage.json')
+    book = load_json(path, {}) or {}
+    now = utcnow()
+    # the run in flight: still going, overdue, or finished
+    if book.get('pid') and not book.get('finishedAt'):
+        proc = _triage_proc if _triage_proc and _triage_proc.pid == book['pid'] else None
+        code = proc.poll() if proc else (None if pid_alive(book['pid']) else 'unknown')
+        started = parse_time(book.get('startedAt')) or now
+        if code is None and (now - started).total_seconds() > TRIAGE_TIMEOUT:
+            try:
+                os.killpg(book['pid'], 15)
+            except OSError:
+                pass
+            code = 'timed out'
+        if code is None:
+            return {'state': 'running', 'startedAt': book.get('startedAt'), 'ids': book.get('ids') or []}
+        book.update(finishedAt=iso(now), exit=code)
+        _triage_proc = None
+        write_json(path, book)
+    last = {k: book.get(k) for k in ('startedAt', 'finishedAt', 'exit', 'ids')} if book.get('startedAt') else {}
+    pending = []
+    for p in glob.glob(os.path.join(factory, 'incidents', '*.json')):
+        inc = load_json(p, {}) or {}
+        if ((inc.get('factory') or {}).get('state') or 'new') in ('new', 'recurred') and inc.get('id'):
+            pending.append(str(inc['id']))
+    tries = {i: [t for t in (book.get('tries') or {}).get(i, []) if parse_time(t) and (now - parse_time(t)).total_seconds() < 86400]
+             for i in pending}
+    due = sorted(i for i in pending if len(tries[i]) < TRIES_PER_DAY)
+    if not pending:
+        return {'state': 'idle', **last}
+    if not due:
+        return {'state': 'gave-up', 'reason': f'tried {TRIES_PER_DAY} times today without a verdict; see triage.log',
+                'ids': sorted(pending), **last}
+    root = (load_json(os.path.join(factory, 'project.json'), {}) or {}).get('root')
+    claude = shutil.which('claude')
+    if not root or not os.path.isdir(root):
+        return {'state': 'unavailable', 'reason': "the poller doesn't know where the repo is yet: run any /factory command in it once", **last}
+    if not claude:
+        return {'state': 'unavailable', 'reason': "the claude command isn't on the poller's PATH", **last}
+    cmd = [claude, '-p', '/software-factory:factory sentry auto', '--permission-mode', 'acceptEdits',
+           '--allowedTools', *TRIAGE_TOOLS, '--add-dir', factory]
+    log = open(os.path.join(factory, 'triage.log'), 'a')
+    log.write(f'\n== {iso(now)} auto-triage of {", ".join(due)}\n')
+    log.flush()
+    try:
+        _triage_proc = subprocess.Popen(cmd, cwd=root, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+    except OSError as e:
+        return {'state': 'unavailable', 'reason': f"couldn't start claude: {e}", **last}
+    finally:
+        log.close()
+    for i in due:
+        tries[i].append(iso(now))
+    write_json(path, {'pid': _triage_proc.pid, 'startedAt': iso(now), 'ids': due, 'tries': {**(book.get('tries') or {}), **tries}})
+    print(f'{iso(now)} auto-triage started for {", ".join(due)} (pid {_triage_proc.pid})', flush=True)
+    return {'state': 'running', 'startedAt': iso(now), 'ids': due}
 
 
 def poll_loop(factory, args):
@@ -376,7 +468,9 @@ def poll_loop(factory, args):
                 api, api_key = Sentry(cfg), key
             counts = {}
             found = cmd_poll_once(factory, cfg, api, counts)
-            write_status(factory, cfg, every, state='ok', **counts)
+            # only the long-running poller triages; a session's --once leaves it to that session
+            extra = {} if once else {'autoTriage': auto_triage(factory, cfg)}
+            write_status(factory, cfg, every, state='ok', **counts, **extra)
             if found:
                 print(f'{iso(utcnow())} new or regressed: {", ".join(found)}', flush=True)
         except SetupError as e:

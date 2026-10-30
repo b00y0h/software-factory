@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="factory-dashboard-version" content="16">
+<meta name="factory-dashboard-version" content="17">
 <title>Software Factory</title>
 <!--
   The factory's dashboard, for every repo on this machine. The master copy lives in the
@@ -1235,21 +1235,38 @@
     fixing: ['fixing', 'accent'], verifying: ['verifying in production', 'accent'],
     verified: ['fix held', 'pass'], resolved: ['resolved', 'pass'],
   };
+  // Is the poller's headless run triaging this incident, and if not, why it waits for a person.
+  function autoTriageOf(inc) {
+    const a = board.sentryStatus?.autoTriage;
+    const health = sentryHealth(board.project, board.sentryStatus);
+    if (a?.state === 'running' && health?.state === 'ok' && (a.ids || []).includes(String(inc.id))) return { running: true, startedAt: a.startedAt };
+    if (a?.state === 'running' && health?.state === 'ok') return { queued: true, startedAt: a.startedAt };
+    if (!a) return { why: 'run /factory sentry (update the plugin to have new errors triaged automatically)' };
+    if (a.state === 'off') return { why: 'run /factory sentry (auto-triage is off in factory/project.md)' };
+    return { why: `run /factory sentry (auto-triage ${a.state === 'gave-up' ? 'gave up' : "can't run"}: ${a.reason || 'see triage.log'})` };
+  }
   function incidentCard(inc) {
     const s = inc.sentry || {}, f = inc.factory || {};
     const [label, tone] = INC_STATE[f.state] || [f.state || 'new', 'accent'];
     const link = s.link && /^https?:\/\//i.test(s.link) ? `<a href="${esc(s.link)}" target="_blank" rel="noopener" data-stop>Sentry</a>` : '';
     const pr = f.pr && /^https?:\/\//i.test(f.pr) ? ` · <a href="${esc(f.pr)}" target="_blank" rel="noopener" data-stop>${prWord()}</a>` : '';
     let line = label;
+    let [badge, badgeTone] = [label, tone];
+    const auto = autoTriageOf(inc);
+    if (f.state === 'new' || f.state === 'recurred') {
+      if (auto.running) { [badge, badgeTone] = ['triaging automatically', 'accent']; line = `triage started ${ago(auto.startedAt)} · no need to do anything`; }
+      else if (auto.queued) { [badge, badgeTone] = ['queued for triage', 'accent']; line = 'auto-triage takes this next, after the run in progress · no need to do anything'; }
+      else line = `${f.state === 'recurred' ? 'came back after the fix · ' : ''}waiting for you: ${auto.why}`;
+    }
     if (f.state === 'fixing' && f.job) line = `fixing in job ${f.job}`;
     if (f.state === 'verifying' && f.until) line = `verifying in production until ${new Date(f.until).toLocaleString()}`;
     const cmd = f.state === 'fix' ? `/factory sentry fix ${inc.id}` : f.state === 'ask' ? `/factory sentry ignore ${inc.id}`
-      : f.state === 'new' || f.state === 'recurred' ? '/factory sentry' : '';
+      : (f.state === 'new' || f.state === 'recurred') && !auto.running && !auto.queued ? '/factory sentry' : '';
     const done = f.state === 'resolved' || f.state === 'verified';
     return `<article class="card${done ? ' done' : ''}" tabindex="0" role="button" data-incident="${esc(inc.id)}" aria-label="${esc((s.title || inc.id) + ', ' + line)}">
-      <div class="card-top"><span class="card-id"><span class="unit-tag solo">${esc(s.level || 'error')}</span><span class="job-id">${esc(s.shortId || inc.id)}</span></span><span class="badge ${tone}">${esc(label)}</span></div>
+      <div class="card-top"><span class="card-id"><span class="unit-tag solo">${esc(s.level || 'error')}</span><span class="job-id">${esc(s.shortId || inc.id)}</span></span><span class="badge ${badgeTone}">${esc(badge)}</span></div>
       <div class="card-title">${esc(s.title || inc.id)}</div>
-      <div class="state${tone === 'alert' ? ' alert' : ''}">${esc(line)}</div>
+      <div class="state${badgeTone === 'alert' ? ' alert' : ''}">${esc(line)}</div>
       <div class="inc-meta"><span>${esc(String(s.events ?? '?'))} events</span><span>${esc(String(s.users ?? '?'))} users</span>${f.severity ? `<span>${esc(f.severity)} severity</span>` : ''}${s.culprit ? `<span class="mono" title="${esc(s.culprit)}">${esc(s.culprit)}</span>` : ''}</div>
       ${cmd ? `<div class="cmds"><div class="cmd"><span>${esc(cmd)}</span><button class="copy" type="button" data-copy="${esc(cmd)}" data-stop>Copy</button></div></div>` : ''}
       <div class="card-foot"><span>last seen <span data-ago="${esc(s.lastSeen || '')}">${esc(ago(s.lastSeen))}</span></span><span>${link}${pr}</span></div>
@@ -1282,7 +1299,13 @@
       case 'ok': {
         const envs = (cfg.environments || ['production']).join(', ');
         const seen = h.unresolved == null ? '' : ` It sees ${h.unresolved} unresolved issue${h.unresolved === 1 ? '' : 's'} in ${esc(envs)} from the last ${esc(cfg.lookbackHours || 24)}h, ${h.qualifying || 0} over your thresholds.`;
-        return ['ok', `Connected to ${esc(where)}`, `Checked ${when(h.checkedAt)}, next check ${esc(untilText(h.checkedAt, h.every))}.${seen}`];
+        const a = h.autoTriage;
+        const auto = !a ? '' : a.state === 'running' ? ` Triaging ${a.ids?.length || ''} new error${a.ids?.length === 1 ? '' : 's'} now, started ${when(a.startedAt)}.`
+          : a.state === 'off' ? ' Auto-triage is off: new errors wait for <code>/factory sentry</code>.'
+          : a.state === 'idle' ? ` New errors are triaged automatically${a.finishedAt ? `; the last run finished ${when(a.finishedAt)}` : ''}.`
+          : ` Auto-triage ${a.state === 'gave-up' ? 'gave up' : "can't run"}: ${esc(a.reason || '')}.`;
+        return [a && ['unavailable', 'gave-up'].includes(a.state) ? 'bad' : 'ok', `Connected to ${esc(where)}`,
+          `Checked ${when(h.checkedAt)}, next check ${esc(untilText(h.checkedAt, h.every))}.${seen}${auto}`];
       }
       case 'waiting': return ['', 'Sentry is set up, but not checked yet', `The poller starts with the next <code>/factory</code> command in this repo, and checks every 5 minutes.`];
       case 'no-token': return ['bad', 'Not connected: no Sentry token', `${esc(h.error || '')}. ${esc(h.hint || '')}`];
@@ -1294,12 +1317,10 @@
   function renderIncidents() {
     const health = sentryHealth(board.project, board.sentryStatus);
     const all = board.incidents || [];
-    const weekAgo = Date.now() - 7 * 86400000;
     const shown = all.filter((i) => {
       const st = i.factory?.state || 'new';
-      if (st === 'noise' || st === 'duplicate') return false;
-      if (st === 'resolved' || st === 'verified') return new Date(i.factory?.resolvedAt || i.factory?.verifiedAt || i.factory?.updated || 0).getTime() > weekAgo;
-      return true;
+      // solved and dismissed errors leave the strip; the header still counts them
+      return !['noise', 'duplicate', 'resolved', 'verified'].includes(st);
     });
     const order = { recurred: 0, ask: 1, fix: 2, new: 3, triaging: 3, fixing: 4, verifying: 5, verified: 6, resolved: 6 };
     const sev = { high: 0, medium: 1, low: 2 };
@@ -1314,7 +1335,7 @@
     }
     const open = shown.filter((i) => !['resolved', 'verified'].includes(i.factory?.state)).length;
     const settled = all.filter((i) => ['noise', 'duplicate'].includes(i.factory?.state)).length;
-    const resolved = all.filter((i) => i.factory?.state === 'resolved').length;
+    const resolved = all.filter((i) => ['resolved', 'verified'].includes(i.factory?.state)).length;
     $('inc-title').textContent = `Sentry · ${open} open`;
     $('inc-quiet').textContent = [resolved ? `${resolved} resolved by the factory` : '', settled ? `${settled} dismissed as noise or duplicates` : '',
       board.project?.sentry?.autonomy ? `autonomy: ${board.project.sentry.autonomy}` : ''].filter(Boolean).join(' · ');
@@ -1326,7 +1347,13 @@
     const inc = (board.incidents || []).find((i) => i.id === id);
     if (!inc) return;
     const base = `incidents/${encodeURIComponent(id)}`;
-    openDocs({ key: 'inc:' + id, meta: `${inc.sentry?.shortId || id} · ${inc.factory?.state || 'new'}`, title: inc.sentry?.title || id,
+    const st = inc.factory?.state || 'new';
+    const auto = autoTriageOf(inc);
+    const empty = st === 'triaging' ? 'A triager is reading the code for this error now. Its verdict appears here.'
+      : auto.running ? 'Auto-triage is working on this error now. Its verdict appears here when it finishes.'
+      : auto.queued ? 'Queued: auto-triage takes this error next, once the run in progress finishes. Its verdict appears here.'
+      : `Nobody is working on this error yet. It is waiting for you: ${auto.why}.`;
+    openDocs({ key: 'inc:' + id, meta: `${inc.sentry?.shortId || id} · ${st}`, title: inc.sentry?.title || id, empty,
       base, files: [['triage.md', 'Triage']], read: (p) => (DEMO ? demoIncidentFile(inc) : readFile(base, p)) });
   }
 
@@ -1356,7 +1383,7 @@
       base, files: [['plan.md', 'Run plan'], ['a11y.md', 'Accessibility'], ['completion.md', 'Completion check'],
         ...Array.from({ length: run.ci?.round || 0 }, (_, i) => [`ci/ci-${i + 1}.md`, `CI ${i + 1}`, 0, `CI after push ${i + 1}`])], read: (p) => (DEMO ? demoRunFile(run, p) : readFile(base, p)) });
   }
-  async function openDocs({ key, meta, title, base, files, read }) {
+  async function openDocs({ key, meta, title, base, files, read, empty }) {
     openKey = key;
     lastFocus = document.activeElement;
     $('drawer-meta').textContent = meta;
@@ -1372,7 +1399,7 @@
     const found = files.map((f, i) => ({ path: f[0], label: f[1], round: f[2], name: f[3] || f[1], text: texts[i] })).filter((f) => f.text != null);
     if (!found.length) {
       $('tabs').innerHTML = '';
-      $('doc').innerHTML = '<p class="muted">No files yet. The first agent is still working.</p>';
+      $('doc').innerHTML = `<p class="muted">${esc(empty || 'No files yet. The first agent is still working.')}</p>`;
       return;
     }
     let html = ''; let lastRound = 0;
@@ -1463,7 +1490,8 @@
     return {
       project: { name: 'Sample project', host: 'github', merge: 'auto-merge',
         sentry: { url: 'https://sentry.example.com', org: 'sample', projects: ['web'], environments: ['production'], lookbackHours: 24, autonomy: 'triage' } },
-      sentryStatus: { state: 'ok', checkedAt: at(1), okAt: at(1), every: 300, host: 'sentry.example.com', unresolved: 17, qualifying: 3 },
+      sentryStatus: { state: 'ok', checkedAt: at(1), okAt: at(1), every: 300, host: 'sentry.example.com', unresolved: 17, qualifying: 3,
+        autoTriage: { state: 'running', startedAt: at(2), ids: ['905'] } },
       incidents: [
         { id: '901', sentry: { shortId: 'SAMPLE-1A', title: "TypeError: Cannot read properties of undefined (reading 'recipeId')", culprit: 'apps/email/compose.ts in buildDraft',
           level: 'error', events: 42, users: 7, lastSeen: at(6), link: null }, factory: { state: 'fix', severity: 'high' } },
@@ -1473,6 +1501,8 @@
           level: 'error', events: 9, users: 3, lastSeen: at(300), link: null }, factory: { state: 'verifying', job: '008-locale-date-format', until: at(-600) } },
         { id: '904', sentry: { shortId: 'SAMPLE-1D', title: 'ResizeObserver loop completed with undelivered notifications', level: 'error', events: 300, users: 80 },
           factory: { state: 'noise' } },
+        { id: '905', sentry: { shortId: 'SAMPLE-1E', title: "Error: Hydration failed because the server rendered HTML didn't match the client", culprit: 'apps/web/src/builder/Canvas.tsx',
+          level: 'error', events: 8, users: 2, lastSeen: at(9), link: null }, factory: { state: 'new' } },
       ],
       runs: [{
         // already shipped: it lives in the Shipped list, not on the board

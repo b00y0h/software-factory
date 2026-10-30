@@ -33,7 +33,7 @@ import sys
 import urllib.parse
 
 # dashboard.sh restarts a hub that reports a lower version than the script it has.
-HUB_VERSION = 2
+HUB_VERSION = 3
 
 SEG = r'[A-Za-z0-9_][A-Za-z0-9._-]*'
 # The paths inside a project folder the dashboard may read. Nothing else is served.
@@ -127,7 +127,14 @@ def summarize(home, repo):
     ci_pending = sum(1 for x in pushed if x['ci'].get('status') == 'pending')
 
     incidents = [read_json(p) for p in glob.glob(os.path.join(folder, 'incidents', '*.json'))]
-    inc_state = [str(((i or {}).get('factory') or {}).get('state') or 'new') for i in incidents if isinstance(i, dict)]
+    status = read_json(os.path.join(folder, 'sentry-status.json'))
+    auto = (status or {}).get('autoTriage') if isinstance(status, dict) else None
+    # while the poller's headless run is triaging, new errors (in it, or queued for the next one)
+    # don't need a person
+    auto_running = (auto or {}).get('state') == 'running'
+    inc_state = [('triaging' if auto_running and st in ('new', 'recurred') else st)
+                 for i in incidents if isinstance(i, dict)
+                 for st in [str((i.get('factory') or {}).get('state') or 'new')]]
 
     running = [j for j in open_jobs if j.get('stage') in ACTIVE]
     for x in running + [r for r in open_runs if r.get('stage') in ('planning', 'running', 'paused')]:
@@ -142,9 +149,9 @@ def summarize(home, repo):
     except OSError:
         pass
 
-    sentry = sentry_health(project, read_json(os.path.join(folder, 'sentry-status.json')))
+    sentry = sentry_health(project, status)
     alert = bool(human or ci_red or any(s in INC_ALERT for s in inc_state) or (sentry and sentry['state'] in SENTRY_ALERT))
-    busy = bool(running or ci_pending or any(r.get('stage') in ('planning', 'running') for r in open_runs))
+    busy = bool(running or ci_pending or auto_running or any(r.get('stage') in ('planning', 'running') for r in open_runs))
     return {
         'id': repo,
         'name': project.get('name') or repo,
@@ -182,7 +189,7 @@ def sentry_health(project, status):
         return None
     if not isinstance(status, dict) or not status.get('checkedAt'):
         return {'state': 'waiting'}
-    keep = ('state', 'checkedAt', 'okAt', 'every', 'error', 'hint', 'unresolved', 'qualifying', 'host')
+    keep = ('state', 'checkedAt', 'okAt', 'every', 'error', 'hint', 'unresolved', 'qualifying', 'host', 'autoTriage')
     out = {k: status.get(k) for k in keep}
     try:
         checked = datetime.datetime.fromisoformat(str(status['checkedAt']).replace('Z', '+00:00'))

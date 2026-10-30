@@ -299,7 +299,7 @@ Parse `$ARGUMENTS`:
 | `next` | When Sentry autonomy is `fix`, first take the most severe Sentry incident at `fix` if the daily cap allows (see **Sentry incidents**). Otherwise claim the first `- [ ]` line in `FACTORY/backlog.md` that no other session has claimed (`mkdir FACTORY/claims/<first 12 hex of the line's sha1>` succeeds), tick it (`- [x] <text> → <JOB>`), and run it as a new job. If none is left, say so and stop. |
 | `approve <job-id>` | The job must be in `needs-human` on **your** floor (enter its floor first if this session isn't on it; see **Continuing a run**). If its `gate` is `spec`, approve the spec (see **The spec gate**). If its `gate` is `ci`, you're saying there is nothing more to fix: clear `gate`, set the job back to `merging` (a run back to `pushed`), and re-check from step 2 of **Shepherding the PR**. Otherwise, for a job, go to **Merge**; for a run unit, accept it (step 6 of the run) and continue the run. |
 | `rework <job-id> <note>` | Same floor rule. Go to **Rework**. |
-| `sentry [fix <id> \| ignore <id>]` | See **Sentry incidents**. |
+| `sentry [fix <id> \| ignore <id> \| auto]` | See **Sentry incidents**. `auto` is the headless triage run the Sentry poller starts by itself; a person never needs to type it. |
 | `lessons [accept\|reject <ids\|all>]` | See **Lessons**. Any session may run it; it never touches a floor's job. |
 | a single word, or a word and an id (`status`, `sentry`, `sentry fix 901`) that isn't a command above | **Not a feature.** It is most likely a command from a newer version of this plugin. Say: *"`<word>` isn't a command in software-factory <version>. If it's from a newer version, update the plugin (in a terminal: `claude plugin update software-factory@software-factory`) and start a new session. If you meant a feature, describe it in a sentence."* Then stop. Never start a job from it. |
 | anything else | The text is a feature. Run a new **job**. If it is only a path to a planning document with more than one unit (a PRD, an execution spec or a workplan, not just an ADR), run it as `adr <path>` instead, so its units are planned, ordered and run in parallel where they can be. |
@@ -336,7 +336,8 @@ Before any command:
    files**). Then, for your own board file only: if your job's or run's `ci.status` is `pending` (an earlier wait ran out, or the
    session ended mid-wait), run `ci.py` once **without** `--wait` and carry on from step 3
    of **Shepherding the PR** with what it prints. Otherwise never poll.
-7. Keep `FACTORY/project.json` in step with `PROFILE`: its `name`, `host` and `merge` from the
+7. Keep `FACTORY/project.json` in step with `PROFILE`: its `root` (`ROOT`, so the Sentry
+   poller can start auto-triage in this repo), its `name`, `host` and `merge` from the
    Settings table, `generated` from the *Generated files* list, `ui` from the *UI paths*
    list, and `bays` from the *Bays* row (`yes` is `true`; keep the bay check's value when the
    profile has no such row). Rewrite it (write a `.tmp` file, then `mv`) only if something
@@ -911,7 +912,15 @@ never written to a board file, job folder or prompt. Each incident is
 **Settings** (`project.json`'s `sentry` block, from `PROFILE`'s *Sentry* section): `url`,
 `org`, `projects`, `environments`, `levels`, `minEvents`, `minUsers`, `lookbackHours`,
 `ignore`, `autonomy` (`off`, `triage` or `fix`), `dailyCap`, `deployLagHours`,
-`verifyHours`, and `resolve` (`true` to resolve the issue in Sentry after verifying).
+`verifyHours`, `resolve` (`true` to resolve the issue in Sentry after verifying), and
+`autoTriage` (`true` unless the profile's *Auto-triage* says `off`).
+
+**Auto-triage.** New errors must not wait for someone to type `/factory sentry`. When the
+long-running poller finds incidents that are `new` or `recurred`, it starts a headless run in
+`ROOT`: `claude -p "/software-factory:factory sentry auto"`, allowed only `Agent`, `Read`,
+`Grep`, `Glob`, `Write`, `Bash(python3:*)` and `Bash(git:*)`. One run at a time, at most two
+tries per incident a day, 45 minutes at most; `sentry-status.json`'s `autoTriage` says what it
+is doing, and the dashboard shows it. See `/factory sentry auto` below.
 
 **Watching.** `dashboard.sh` keeps `sentry.py poll` running for this state folder (every 5
 minutes, logging to `FACTORY/sentry.log`), and step 8 of **Commands** polls once per command.
@@ -939,6 +948,21 @@ step 8's poll fails, tell the user its `error` and `hint` from that file in one 
      (from `sentry.py list`) is under `dailyCap`. List the rest as above.
 4. Show the user one table of open incidents (state, short id, title, events, users, job),
    and say what needs them: every `ask` (with its **For the human**), and every `recurred`.
+
+**`/factory sentry auto`** (the poller's headless run; nobody is watching, and only the tools
+above are allowed):
+- Of **Before any command**, do only steps 0, 1, 3 and 7. Never move into a floor, never start
+  the dashboard, never run the bay check, never spawn a builder or any job.
+- Triage in a checkout of the base branch kept for this: `git -C <ROOT> fetch origin <BASE>`
+  (skip with Host `none`), then `git -C <ROOT> worktree add --detach
+  <ROOT>/.claude/worktrees/factory-triage <BASE_REF>` if it isn't there, else
+  `git -C <that worktree> checkout --detach <BASE_REF>`. That is the triagers' `WORKTREE`.
+- Run steps 1 and 2 of `/factory sentry` exactly, triaging only incidents that are `new` or
+  `recurred`. Then stop: never start a fix, whatever the autonomy (a session's `/factory
+  sentry` or `/factory next` starts them), and never resolve or ignore anything.
+- If a step fails (an incident can't be fetched, a triager writes no `triage.md`), mark that
+  incident back to its earlier state with `sentry.py mark`, so the next run tries again, and
+  carry on with the others. Finish with one line per incident: its id and verdict.
 
 **`/factory sentry fix <id>`** (or a fix started in step 3) runs a new **job**:
 - `feature.md` is the triage's **Fix brief**, then *"Sentry: <shortId> (<link>). Triage:
